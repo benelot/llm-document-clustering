@@ -12,7 +12,8 @@ The triplet fine-tuning part ("perspective") is not included.
 2. **Tree:** build a full agglomerative (Ward) tree.
 3. **Pairs:** for every merge step from `--k-max` down to `--k-min` clusters,
    take `--pairs-per-merge` pairs. Each pair has one document from each of
-   the two merged clusters. The LLM answers: same problem category?
+   the two merged clusters: the most central ones first
+   (`--pair-sampling central`). The LLM answers: same higher-level topic?
 4. **Choose k:** for each k, count how many answers agree with cutting the
    tree at k:
    - merges above k should be "same";
@@ -47,6 +48,9 @@ naming call per cluster. `--help` lists every flag.
 | `--pair-max-chars` | `0` | optional cap per document in a pair question, `0` = none |
 | `--granularity-question` | depends on `--format` | the "same category?" question; this defines the granularity |
 | `--force-k` | `0` | `>0` skips the pair stage and uses this k |
+| `--pair-sampling` | `central` | `central`: most central documents of the two merged clusters; `random`: random members (noisier) |
+| `--perspective` | `subject` | viewpoint of the grouping, the same eight perspectives as in `llm_classification`; it goes into the pair question, the naming and the embedding instruction, so it also shapes the tree |
+| `--perspective-text` | | your own perspective paragraph |
 | `--name-samples` | `8` | central documents shown for naming |
 
 The reduced vectors and pair answers are saved in `stages/`. With
@@ -54,6 +58,20 @@ The reduced vectors and pair answers are saved in `stages/`. With
 
 To change the granularity, change `--granularity-question`, then run again
 with `--no-resume`.
+
+## Reading the k choice
+
+- `merge_same_share.csv`: for each merge, the share of pairs the LLM called "same".
+- `summary.txt` shows this share for the finest and the coarsest merges.
+- If the chosen k is at the edge of the range (`--k-min` or `--k-max`), the
+  run prints a warning. The k choice then found no optimum.
+  - At `--k-max`, the LLM rarely says "same": make the question looser,
+    try a perspective, or raise `--k-max`.
+  - At `--k-min`, it almost always says "same": make the question stricter,
+    or lower `--k-min`.
+
+Each perspective writes to its own folder,
+`cluster_output/<format>/clusterllm_granularity/<perspective>/`.
 
 ## Outputs
 

@@ -43,6 +43,7 @@ from common.report import write_report, relabel_by_size          # noqa: E402
 from common.profile import P                                     # noqa: E402
 from common.hypotheses import load_hypotheses                                # noqa: E402
 from common import cli                                           # noqa: E402
+from common.perspectives import PERSPECTIVES, perspective_block  # noqa: E402
 
 # ----------------------------------------------------------------------
 # CONFIG (set from command-line flags in main(); run with --help)
@@ -55,6 +56,8 @@ K_MIN, K_MAX, PAIRS_PER_MERGE, PAIR_MAX_CHARS, FORCE_K = 10, 100, 5, 0, 0
 NAME_SAMPLES, NAME_MAX_CHARS = 8, 0
 GRANULARITY_QUESTION = P["granularity_question"]
 DOMAIN = P["system"]
+PAIR_SAMPLING = "central"
+PERSPECTIVE_TEXT = ""
 
 
 def parse_args(argv=None):
@@ -76,11 +79,27 @@ def parse_args(argv=None):
                  "the 'same category?' question; defines the granularity "
                  "(default: depends on --format, see common/profile.py)")
     cli.add_flag(g, "--force-k", "FORCE_K", 0, int, ">0 skips the pair stage and uses this k")
+    cli.add_flag(g, "--pair-sampling", "PAIR_SAMPLING", "central", str,
+                 "central = the most central documents of the two merged clusters "
+                 "(robust), random = random members", choices=["central", "random"])
+    g = p.add_argument_group("perspective (viewpoint of the grouping)")
+    names = ", ".join(f"{k} ({v['title']})" for k, v in PERSPECTIVES.items())
+    cli.add_flag(g, "--perspective", "PERSPECTIVE", "subject", str,
+                 f"named perspective, see common/perspectives.py: {names}",
+                 choices=list(PERSPECTIVES))
+    cli.add_flag(g, "--perspective-text", "PERSPECTIVE_TEXT", "", str,
+                 "your own perspective paragraph (German); the run is then called "
+                 "'custom' unless --perspective names it")
     g = p.add_argument_group("cluster naming")
     cli.add_flag(g, "--name-samples", "NAME_SAMPLES", 8, int, "central documents shown for naming")
     cli.add_flag(g, "--name-max-chars", "NAME_MAX_CHARS", 0, int,
                  "optional cap per document for naming, 0 = none")
-    return cli.apply_common(p.parse_args(argv), "clusterllm_granularity")
+    args = p.parse_args(argv)
+    explicit = any(a == "--perspective" or a.startswith("--perspective=")
+                   for a in (argv if argv is not None else sys.argv[1:]))
+    if args.perspective_text and not explicit:
+        args.perspective = "custom"
+    return cli.apply_common(args, f"clusterllm_granularity/{args.perspective}")
 
 
 # ----------------------------------------------------------------------
@@ -135,7 +154,7 @@ def merge_steps(Z, nodes, n):
 
 def _pair_prompt(t1, t2):
     return f"""{GRANULARITY_QUESTION}
-
+{perspective_block(PERSPECTIVE_TEXT)}
 {P['item']} A:
 {t1}
 
@@ -146,12 +165,28 @@ Gib JSON zurück: {{"same": true}} oder {{"same": false}}
 """
 
 
-def stage_pairs(df, steps):
+def _pair_config():
+    """Fingerprint of everything that changes the pair answers."""
+    import hashlib
+    key = "|".join([PAIR_SAMPLING, str(PAIRS_PER_MERGE), GRANULARITY_QUESTION,
+                    PERSPECTIVE_TEXT, str(SEED)])
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+
+
+def _central_order(members, X):
+    """Members sorted by distance to their cluster centre (most central first)."""
+    idx = np.asarray(members)
+    c = X[idx].mean(axis=0)
+    return idx[np.argsort(np.linalg.norm(X[idx] - c, axis=1))].tolist()
+
+
+def stage_pairs(df, steps, X):
     path = STAGE_DIR / "pairs.csv"
+    cfg = _pair_config()
     if RESUME and path.exists():
         old = pd.read_csv(path)
         sides = {s["j"]: (set(s["a"]), set(s["b"])) for s in steps}
-        ok = len(old) > 0 and all(
+        ok = len(old) > 0 and "config" in old and (old["config"] == cfg).all() and all(
             r.j in sides and r.i1 < len(df) and r.i2 < len(df)
             and df["incident_id"].iat[r.i1] == r.incident_1
             and df["incident_id"].iat[r.i2] == r.incident_2
@@ -160,15 +195,21 @@ def stage_pairs(df, steps):
         if ok:
             print(f"[pairs] reuse {path}")
             return old
-        print("[pairs] saved pairs do not match the current tree, asking the LLM again")
+        print("[pairs] saved pairs do not match the current tree or settings, "
+              "asking the LLM again")
 
     rng = random.Random(SEED)
     pairs = []
     for s in steps:
-        for _ in range(PAIRS_PER_MERGE):
-            pairs.append({"j": s["j"], "i1": rng.choice(s["a"]), "i2": rng.choice(s["b"])})
+        if PAIR_SAMPLING == "central":
+            a, b = _central_order(s["a"], X), _central_order(s["b"], X)
+            for i in range(PAIRS_PER_MERGE):
+                pairs.append({"j": s["j"], "i1": a[i % len(a)], "i2": b[i % len(b)]})
+        else:
+            for _ in range(PAIRS_PER_MERGE):
+                pairs.append({"j": s["j"], "i1": rng.choice(s["a"]), "i2": rng.choice(s["b"])})
     print(f"[pairs] {len(pairs)} LLM pair questions "
-          f"({len(steps)} merges x {PAIRS_PER_MERGE})")
+          f"({len(steps)} merges x {PAIRS_PER_MERGE}, {PAIR_SAMPLING} sampling)")
 
     texts = df["consolidated_text"].tolist()
 
@@ -189,6 +230,7 @@ def stage_pairs(df, steps):
     out["incident_1"] = df["incident_id"].values[out["i1"]]
     out["incident_2"] = df["incident_id"].values[out["i2"]]
     out["same"] = [None if isinstance(r, Exception) else bool(r) for r in res]
+    out["config"] = cfg
     STAGE_DIR.mkdir(parents=True, exist_ok=True)
     out.to_csv(path, index=False, encoding="utf-8")
     return out
@@ -240,7 +282,7 @@ def plot_k(scores, p_same, best, out_png):
 def _name_prompt(texts):
     items = "\n---\n".join(texts)
     return f"""Diese {P['items']} gehören zu einem Cluster. Benenne das gemeinsame Thema.
-
+{perspective_block(PERSPECTIVE_TEXT)}
 Gib JSON zurück:
 {{"cluster_name": "2 bis 6 Wörter, Deutsch",
   "description": "1 Satz: welches Thema die {P['items']} gemeinsam haben"}}
@@ -285,6 +327,7 @@ def main(argv=None):
     global OUTPUT_DIR, STAGE_DIR, RESUME, SEED, PLOT, DOMAIN, GRANULARITY_QUESTION
     global DIM_REDUCTION, DIMRED_N_COMPONENTS, DIMRED_UMAP_N_NEIGHBORS
     global K_MIN, K_MAX, PAIRS_PER_MERGE, PAIR_MAX_CHARS, FORCE_K, NAME_SAMPLES, NAME_MAX_CHARS
+    global PAIR_SAMPLING, PERSPECTIVE_TEXT
     from scipy.cluster.hierarchy import cut_tree
     args = parse_args(argv)
     cli.print_settings(args)
@@ -297,6 +340,13 @@ def main(argv=None):
     K_MIN, K_MAX, PAIRS_PER_MERGE, PAIR_MAX_CHARS, FORCE_K = \
         args.k_min, args.k_max, args.pairs_per_merge, args.pair_max_chars, args.force_k
     NAME_SAMPLES, NAME_MAX_CHARS = args.name_samples, args.name_max_chars
+    PAIR_SAMPLING = args.pair_sampling
+    persp = PERSPECTIVES.get(args.perspective, {})
+    PERSPECTIVE_TEXT = args.perspective_text or persp.get("text", "")
+    # the embedding instruction follows the perspective; here it also shapes the tree
+    if args.embed_instruction == "auto" and persp.get("embed") and vllm.EMBED_PREFIX:
+        vllm.EMBED_PREFIX = f"Instruct: {persp['embed']}\nQuery: " + args.embed_prefix
+    print(f"[perspective] {args.perspective}: {PERSPECTIVE_TEXT or '(none)'}")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     df = load_cleaned(args.input)
@@ -306,16 +356,34 @@ def main(argv=None):
     X = stage_reduce(vectors)
     Z, nodes = build_tree(X)
 
+    same_info, edge_warning = "n/a (--force-k)", ""
     if FORCE_K > 0:
         k = FORCE_K
         print(f"[k] --force-k {k}, LLM pair stage skipped")
     else:
         steps = merge_steps(Z, nodes, n)
-        pairs = stage_pairs(df, steps)
+        pairs = stage_pairs(df, steps, X)
         k, scores, p_same = choose_k(pairs)
         scores.to_csv(OUTPUT_DIR / "k_scores.csv", index=False)
+        p_same.rename("same_share").rename_axis("merge_from_k").to_csv(
+            OUTPUT_DIR / "merge_same_share.csv")
         plot_k(scores, p_same, k, OUTPUT_DIR / "k_scores.png")
         print(f"[k] chosen k = {k} (agreement {scores['agreement'].max():.3f})")
+        fine = p_same[p_same.index >= K_MAX - 9].mean()
+        coarse = p_same[p_same.index <= K_MIN + 10].mean()
+        same_info = (f"mean {p_same.mean():.2f}, finest 10 merges {fine:.2f}, "
+                     f"coarsest 10 merges {coarse:.2f}")
+        print(f"[k] LLM 'same' share per merge: {same_info}")
+        if k in (K_MIN, K_MAX):
+            edge_warning = (
+                f"chosen k = {k} is at the edge of the range {K_MIN}-{K_MAX}: the k choice "
+                "did not find an optimum. "
+                + ("The LLM rarely says 'same' even for the finest merges: make the "
+                   "question looser (--granularity-question), try a --perspective, or "
+                   "raise --k-max." if k == K_MAX else
+                   "The LLM says 'same' even for coarse merges: make the question stricter "
+                   "or lower --k-min."))
+            print("\n" + "!" * 70 + f"\nWARNING: {edge_warning}\n" + "!" * 70 + "\n")
 
     labels = cut_tree(Z, n_clusters=k).ravel()
     labels, _ = relabel_by_size(labels)
@@ -323,7 +391,7 @@ def main(argv=None):
 
     write_report(
         df, labels, info, OUTPUT_DIR,
-        method="ClusterLLM granularity", vectors=vectors if PLOT else None, noise_name="Noise",
+        method=f"ClusterLLM granularity [{args.perspective}]", vectors=vectors if PLOT else None, noise_name="Noise",
         hypotheses=load_hypotheses(args.hypotheses_file), name_check=args.llm_name_check,
         params={
             "format": args.format, "input": args.input,
@@ -331,6 +399,11 @@ def main(argv=None):
             "DIM_REDUCTION": f"{DIM_REDUCTION} ({DIMRED_N_COMPONENTS} dims)",
             "K range": f"{K_MIN}-{K_MAX}", "PAIRS_PER_MERGE": PAIRS_PER_MERGE,
             "chosen k": k, "force_k": FORCE_K or "off", "SEED": SEED,
+            "perspective": args.perspective,
+            "perspective text": PERSPECTIVE_TEXT or "(none)",
+            "pair sampling": PAIR_SAMPLING,
+            "LLM 'same' share": same_info,
+            "WARNING": edge_warning or "none",
         },
     )
 

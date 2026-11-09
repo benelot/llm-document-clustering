@@ -20,10 +20,10 @@ PROFILES = {
         "items_long": "Incident-Meldungen",
         "category": "Problemkategorie",
         "granularity_question": (
-            "Gehören diese beiden Meldungen zur selben Problemkategorie, d.h. "
-            "betreffen sie dasselbe System bzw. dieselbe Funktion und dieselbe Art "
-            "von Problem? Unterschiedliche Patienten, Personen oder Zeitpunkte spielen "
-            "keine Rolle."
+            "Gehören diese beiden Meldungen zum selben übergeordneten Thema, so dass "
+            "man sie in einer Übersicht über alle Meldungen in dieselbe Gruppe einordnen "
+            "würde? Sie müssen nicht dasselbe Detailproblem beschreiben. Unterschiedliche "
+            "Patienten, Personen, Medikamente oder Zeitpunkte spielen keine Rolle."
         ),
         "label_en": "Incidents",
         "embed_instruction": ("Identify the technical topic or problem category of this "
@@ -42,10 +42,10 @@ PROFILES = {
         "items_long": "Freitext-Antworten",
         "category": "Themenkategorie",
         "granularity_question": (
-            "Gehören diese beiden Antworten zur selben Themenkategorie, d.h. "
-            "sprechen sie dasselbe System bzw. dieselbe Funktion und dieselbe Art "
-            "von Problem oder Verbesserungswunsch an? Unterschiedliche Personen, "
-            "Fachbereiche oder Formulierungen spielen keine Rolle."
+            "Gehören diese beiden Antworten zum selben übergeordneten Thema, so dass "
+            "man sie in einer Übersicht über alle Antworten in dieselbe Gruppe einordnen "
+            "würde? Sie müssen nicht dasselbe Detail ansprechen. Unterschiedliche "
+            "Personen, Fachbereiche oder Formulierungen spielen keine Rolle."
         ),
         "label_en": "Documents",
         "embed_instruction": ("Identify the topic of this clinician's feedback on the "
