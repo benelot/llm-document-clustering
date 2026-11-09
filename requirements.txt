@@ -1,0 +1,8 @@
+# For llm_classification/, clusterllm_granularity/ and common/
+pandas
+numpy
+requests
+scikit-learn
+scipy
+umap-learn
+matplotlib
