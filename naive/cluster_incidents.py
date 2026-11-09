@@ -5,7 +5,7 @@ Cluster hospital incident reports using:
 - HDBSCAN / DBSCAN clustering
 - Qwen LLM summaries via vLLM
 
-Input: cleaned_<format>.json from preprocess_incidents.py or preprocess_cirs.py
+Input: cleaned_<format>.json from preprocess_incidents.py or preprocess_survey.py
 
 Outputs (default folder cluster_output/<format>/naive):
 - cluster_summaries.csv / .json   LLM summary per cluster
@@ -15,7 +15,7 @@ Outputs (default folder cluster_output/<format>/naive):
 
 Examples:
   python naive/cluster_incidents.py --format incidents --dim-reduction umap
-  python naive/cluster_incidents.py --format cirs --hdbscan-min-cluster-size 5
+  python naive/cluster_incidents.py --format survey --hdbscan-min-cluster-size 5
 """
 
 import os
@@ -125,10 +125,10 @@ _PROFILE_TEXT = {
     "incidents": ("You analyze incident reports and identify systemic risks that "
                   "require hospital-wide action.",
                   "hospital incident reports"),
-    "cirs": ("You analyze free-text reports of hospital staff about the clinical "
-             "information system (EHR), from CIRS reports and surveys, and identify "
-             "systemic problems and improvements that require hospital-wide action.",
-             "free-text reports (CIRS / EHR survey)"),
+    "survey": ("You analyze free-text answers of a survey among clinicians about the "
+               "clinical information system (EHR), and identify "
+               "systemic problems and improvements that require hospital-wide action.",
+               "free-text survey answers (EHR survey among clinicians)"),
 }
 
 # LLM labeling
@@ -572,7 +572,7 @@ def label_cluster(group):
 
     for (_, row), text in zip(sample.iterrows(), fitted):
 
-        if DATA_PROFILE == "cirs":
+        if DATA_PROFILE == "survey":
             incident_lines.append(
                 f"ID: {row.get('incident_id', '')}\n"
                 f"Question: {row.get('question', '')}\n"

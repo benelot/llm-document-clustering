@@ -2,7 +2,7 @@
 Data profile: adapts the LLM prompts to the kind of text being clustered.
 
   --format incidents   (default) ServiceNow incident reports, preprocess_incidents.py
-  --format cirs        CIRS reports / EHR survey answers, preprocess_cirs.py
+  --format survey      EHR survey among clinicians, preprocess_survey.py
 (environment fallback: DATA_PROFILE)
 """
 
@@ -27,10 +27,10 @@ PROFILES = {
         ),
         "label_en": "Incidents",
     },
-    "cirs": {
+    "survey": {
         "system": (
-            "Du analysierst Freitext-Antworten von Spitalmitarbeitenden zum "
-            "Klinikinformationssystem (EHR/EPIC), aus CIRS-Meldungen und Befragungen: "
+            "Du analysierst Freitext-Antworten aus einer Befragung von Klinikerinnen "
+            "und Klinikern zum Klinikinformationssystem (EHR/EPIC): "
             "Probleme, Verbesserungsvorschläge, Schulung, Hardware, KI-Potenzial. "
             "Die Antworten können Deutsch, Französisch oder Englisch sein. "
             "Antworte ausschliesslich mit gültigem JSON, ohne Markdown."

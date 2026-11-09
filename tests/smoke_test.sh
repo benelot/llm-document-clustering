@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of all pipelines against the mock vLLM server,
-# for both input formats (incidents and CIRS). Synthetic data only.
+# for both input formats (incidents and survey). Synthetic data only.
 # Usage: bash tests/smoke_test.sh [workdir]
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,21 +26,21 @@ python "$REPO/naive/cluster_incidents.py"           --format incidents "${API[@]
 python "$REPO/llm_classification/run.py"            --format incidents "${API[@]}" "${CLASSIFY[@]}"
 python "$REPO/clusterllm_granularity/run.py"        --format incidents "${API[@]}" "${GRAN[@]}"
 
-echo "=== Format 2: CIRS ==="
-python "$REPO/tests/make_synthetic_cirs.py" cirs.xlsx 120
-python "$REPO/naive/preprocess_cirs.py" --input cirs.xlsx
+echo "=== Format 2: survey ==="
+python "$REPO/tests/make_synthetic_survey.py" survey.xlsx 120
+python "$REPO/naive/preprocess_survey.py" --input survey.xlsx
 # synthetic hypothesis clusters: respondents grouped by the topic of their "Fix 1" answer
 python - <<'PY'
 import json, pandas as pd
-df = pd.read_excel("cirs.xlsx")
+df = pd.read_excel("survey.xlsx")
 hypotheses = {}
 for kw, cat in [("Drucker", "Drucken"), ("Warnmeldung", "Warnmeldung"), ("Login", "Login")]:
     ids = df.loc[df["Fix 1"].astype(str).str.contains(kw), "RespondentID"].astype(str).tolist()
     hypotheses[cat] = ids[:6]
-json.dump(hypotheses, open("hypotheses_cirs.json", "w"), indent=2)
+json.dump(hypotheses, open("hypotheses_survey.json", "w"), indent=2)
 PY
-python "$REPO/naive/cluster_incidents.py"           --format cirs --hypotheses-file hypotheses_cirs.json "${API[@]}" "${NAIVE[@]}"
-python "$REPO/llm_classification/run.py"            --format cirs --hypotheses-file hypotheses_cirs.json "${API[@]}" "${CLASSIFY[@]}"
-python "$REPO/clusterllm_granularity/run.py"        --format cirs --hypotheses-file hypotheses_cirs.json "${API[@]}" "${GRAN[@]}"
+python "$REPO/naive/cluster_incidents.py"           --format survey --hypotheses-file hypotheses_survey.json "${API[@]}" "${NAIVE[@]}"
+python "$REPO/llm_classification/run.py"            --format survey --hypotheses-file hypotheses_survey.json "${API[@]}" "${CLASSIFY[@]}"
+python "$REPO/clusterllm_granularity/run.py"        --format survey --hypotheses-file hypotheses_survey.json "${API[@]}" "${GRAN[@]}"
 
 echo "Smoke test OK. Outputs in $WORK/cluster_output"

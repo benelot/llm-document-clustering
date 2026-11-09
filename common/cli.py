@@ -49,7 +49,7 @@ def add_flag(group, flag, envname, default, typ=str, help="", **kw):
 def add_common_args(parser, embeddings=True, llm=True):
     g = parser.add_argument_group("data")
     add_flag(g, "--format", "DATA_PROFILE", "incidents", str,
-             "input format: incidents (ServiceNow) or cirs", choices=["incidents", "cirs"])
+             "input format: incidents (ServiceNow) or survey", choices=["incidents", "survey"])
     add_flag(g, "--input", "CLEANED_FILE", None, str,
              "cleaned input JSON/CSV (default: cleaned_<format>.json)")
     add_flag(g, "--output-dir", "OUTPUT_DIR", None, str,

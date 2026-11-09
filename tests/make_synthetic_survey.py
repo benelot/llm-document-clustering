@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Write a synthetic CIRS / EHR survey export (.xlsx or .csv) for smoke tests.
+"""Write a synthetic EHR survey export (.xlsx or .csv) for smoke tests.
 
-Usage: python tests/make_synthetic_cirs.py <out.xlsx|out.csv> [n_respondents]
+Usage: python tests/make_synthetic_survey.py <out.xlsx|out.csv> [n_respondents]
 """
 
 import sys

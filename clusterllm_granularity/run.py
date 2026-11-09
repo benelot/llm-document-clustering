@@ -24,7 +24,7 @@ included.
 
 Examples (run from the folder that holds the cleaned input):
   python <repo>/clusterllm_granularity/run.py --format incidents
-  python <repo>/clusterllm_granularity/run.py --format cirs --k-min 5 --k-max 60
+  python <repo>/clusterllm_granularity/run.py --format survey --k-min 5 --k-max 60
 """
 
 import sys

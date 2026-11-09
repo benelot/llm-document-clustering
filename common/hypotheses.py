@@ -6,7 +6,7 @@ these groups; they are only used to evaluate the result at the end.
 
 File format (hypotheses/<format>.json):
   {"Warnmeldung": ["INC1", "INC2"], "Pumpen / Perfusor": ["INC3"]}
-For CIRS the IDs are the document IDs from preprocess_cirs.py
+For the survey the IDs are the document IDs from preprocess_survey.py
 (RespondentID, or RespondentID_<field> with --unit field).
 """
 

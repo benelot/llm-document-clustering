@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Preprocess CIRS / EHR survey exports (Excel or CSV) into the same format as
+Preprocess exports of the EHR survey among clinicians (Excel or CSV) into the same format as
 preprocess_incidents.py, so that every pipeline in this repo can read it.
 
 Expected columns (names are matched case- and whitespace-insensitively):
@@ -14,18 +14,18 @@ Expected columns (names are matched case- and whitespace-insensitively):
              Hardware issues description
 
 Unit of clustering (--unit):
-  report  (default) one document per CIRS report / respondent: all answers
-          joined into one message, each prefixed with its question.
+  respondent  (default) one document per survey respondent: all answers
+              joined into one message, each prefixed with its question.
           ID = RespondentID.
-  field   one document per non-empty answer. ID = <RespondentID>_<field>,
+  field       one document per non-empty answer. ID = <RespondentID>_<field>,
           e.g. 1234_fix1.
 
 Examples:
-  python preprocess_cirs.py --input cirs.xlsx
-  python preprocess_cirs.py --input cirs.csv --unit field --include-question
+  python preprocess_survey.py --input survey.xlsx
+  python preprocess_survey.py --input survey.csv --unit field --include-question
 
-Output: cleaned_cirs.csv + cleaned_cirs.json. Then run any pipeline with
---format cirs.
+Output: cleaned_survey.csv + cleaned_survey.json. Then run any pipeline with
+--format survey.
 """
 
 import re
@@ -38,9 +38,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import cli  # noqa: E402
 
 # set from flags in main()
-CIRS_UNIT = "report"
-CIRS_INCLUDE_QUESTION = False
-CIRS_MIN_CHARS = 3
+SURVEY_UNIT = "respondent"
+SURVEY_INCLUDE_QUESTION = False
+SURVEY_MIN_CHARS = 3
 
 # source column -> output column
 META_COLUMNS = {
@@ -94,7 +94,7 @@ def _clean(val):
     if pd.isna(val):
         return ""
     s = re.sub(r"\s+", " ", str(val)).strip()
-    if s.lower() in PLACEHOLDERS or len(s) < CIRS_MIN_CHARS:
+    if s.lower() in PLACEHOLDERS or len(s) < SURVEY_MIN_CHARS:
         return ""
     return s
 
@@ -119,17 +119,17 @@ def preprocess(df):
             "priority": "", "status": "", "assignment_group": "",
             "department": meta.get("specialty", ""), "created_at": "",
         }
-        if CIRS_UNIT == "report":
+        if SURVEY_UNIT == "respondent":
             text = "\n\n".join(f"{src}: {t}" for src, _, t in answers)
             docs.append({"incident_id": rid, "question": "all",
                          "consolidated_text": text, **base})
-        elif CIRS_UNIT == "field":
+        elif SURVEY_UNIT == "field":
             for src, key, t in answers:
-                text = f"FRAGE: {src}\nANTWORT: {t}" if CIRS_INCLUDE_QUESTION else t
+                text = f"FRAGE: {src}\nANTWORT: {t}" if SURVEY_INCLUDE_QUESTION else t
                 docs.append({"incident_id": f"{rid}_{key}", "question": src,
                              "consolidated_text": text, **base})
         else:
-            raise ValueError(f"Unknown unit: {CIRS_UNIT}. Use report or field.")
+            raise ValueError(f"Unknown unit: {SURVEY_UNIT}. Use respondent or field.")
 
     out = pd.DataFrame(docs)
     first = ["incident_id", "respondent_id", "question", "consolidated_text"]
@@ -137,19 +137,19 @@ def preprocess(df):
 
 
 def main(argv=None):
-    global CIRS_UNIT, CIRS_INCLUDE_QUESTION, CIRS_MIN_CHARS
+    global SURVEY_UNIT, SURVEY_INCLUDE_QUESTION, SURVEY_MIN_CHARS
     p = cli.make_parser(__doc__)
-    cli.add_flag(p, "--input", "CIRS_INPUT", "cirs.xlsx", str, "CIRS export, .xlsx/.xls or .csv")
-    cli.add_flag(p, "--output", "CIRS_OUTPUT", "cleaned_cirs.csv", str,
+    cli.add_flag(p, "--input", "SURVEY_INPUT", "survey.xlsx", str, "survey export, .xlsx/.xls or .csv")
+    cli.add_flag(p, "--output", "SURVEY_OUTPUT", "cleaned_survey.csv", str,
                  "output CSV; a .json with the same name is written too")
-    cli.add_flag(p, "--unit", "CIRS_UNIT", "report", str,
-                 "report = one document per CIRS report, field = one per answer",
-                 choices=["report", "field"])
-    cli.add_flag(p, "--include-question", "CIRS_INCLUDE_QUESTION", False, bool,
+    cli.add_flag(p, "--unit", "SURVEY_UNIT", "respondent", str,
+                 "respondent = one document per survey respondent, field = one per answer",
+                 choices=["respondent", "field"])
+    cli.add_flag(p, "--include-question", "SURVEY_INCLUDE_QUESTION", False, bool,
                  "--unit field only: prefix each answer with its question")
-    cli.add_flag(p, "--min-chars", "CIRS_MIN_CHARS", 3, int, "drop answers shorter than this")
+    cli.add_flag(p, "--min-chars", "SURVEY_MIN_CHARS", 3, int, "drop answers shorter than this")
     args = p.parse_args(argv)
-    CIRS_UNIT, CIRS_INCLUDE_QUESTION, CIRS_MIN_CHARS = args.unit, args.include_question, args.min_chars
+    SURVEY_UNIT, SURVEY_INCLUDE_QUESTION, SURVEY_MIN_CHARS = args.unit, args.include_question, args.min_chars
     inp, outp = args.input, args.output
     if inp.lower().endswith((".xlsx", ".xls")):
         df = pd.read_excel(inp)
@@ -160,10 +160,10 @@ def main(argv=None):
     out = preprocess(df)
     out.to_csv(outp, index=False, encoding="utf-8")
     out.to_json(outp.replace(".csv", ".json"), orient="records", force_ascii=False, indent=2)
-    print(f"Unit: {CIRS_UNIT}. Wrote {len(out)} documents from "
+    print(f"Unit: {SURVEY_UNIT}. Wrote {len(out)} documents from "
           f"{out['respondent_id'].nunique() if len(out) else 0} respondents to "
           f"{outp} and {outp.replace('.csv', '.json')}")
-    if len(out) and CIRS_UNIT == "field":
+    if len(out) and SURVEY_UNIT == "field":
         print("\nDocuments per question:")
         print(out["question"].value_counts().to_string())
 

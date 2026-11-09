@@ -18,7 +18,7 @@ Stages (each stage result is saved; --resume reuses it on the next run):
 
 Examples (run from the folder that holds the cleaned input):
   python <repo>/llm_classification/run.py --format incidents
-  python <repo>/llm_classification/run.py --format cirs --llm-concurrency 16
+  python <repo>/llm_classification/run.py --format survey --llm-concurrency 16
 """
 
 import sys

@@ -84,7 +84,7 @@ python preprocess_incidents.py --input incidents.xlsx
 ```
 
 ```bash
-python preprocess_cirs.py --input cirs.xlsx
+python preprocess_survey.py --input survey.xlsx
 ```
 
 Embed, cluster, summarize and report:
@@ -93,7 +93,7 @@ Embed, cluster, summarize and report:
 python cluster_incidents.py --format incidents --embed-url http://<embed-host>:<embed-port>/v1/embeddings --llm-url http://<llm-host>:<llm-port>/v1/chat/completions
 ```
 
-Use `--format cirs` for CIRS reports. It reads `cleaned_cirs.json` and adapts
+Use `--format survey` for the EHR survey among clinicians. It reads `cleaned_survey.json` and adapts
 the LLM prompt.
 
 A full run on ~3,500 incidents:
@@ -173,11 +173,11 @@ naive/
 ├── README.md
 ├── requirements.txt
 ├── preprocess_incidents.py
-├── preprocess_cirs.py
+├── preprocess_survey.py
 ├── cluster_incidents.py
 ├── cluster_examples.py
 ├── plot_clusters.py
-├── incidents.xlsx / cirs.xlsx  # input (not in git)
+├── incidents.xlsx / survey.xlsx  # input (not in git)
 ├── cleaned_<format>.json       # generated (not in git)
 └── cluster_output/             # generated (not in git)
 ```

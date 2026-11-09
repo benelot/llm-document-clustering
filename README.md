@@ -1,8 +1,9 @@
 # LLM document clustering
 
-This repo clusters hospital reports by topic. It compares three approaches
-on two input formats: ServiceNow incidents and CIRS reports. All approaches
-use a local vLLM server (an OpenAI-compatible API) for embeddings and chat.
+This repo clusters hospital texts by topic. It compares three approaches on
+two input formats: ServiceNow incidents and an EHR survey among clinicians.
+All approaches use a local vLLM server (an OpenAI-compatible API) for
+embeddings and chat. A CIRS format will follow.
 
 | Folder | Approach |
 |---|---|
@@ -34,7 +35,7 @@ python naive/preprocess_incidents.py --input incidents.xlsx
 ```
 
 ```bash
-python naive/preprocess_cirs.py --input cirs.xlsx
+python naive/preprocess_survey.py --input survey.xlsx
 ```
 
 Then run any approach with the same flags:
@@ -44,7 +45,7 @@ python naive/cluster_incidents.py --format incidents --embed-url http://<host>:<
 ```
 
 ```bash
-python llm_classification/run.py --format cirs --embed-url ... --llm-url ...
+python llm_classification/run.py --format survey --embed-url ... --llm-url ...
 ```
 
 ```bash
@@ -59,7 +60,7 @@ also falls back to an environment variable, which `--help` shows as
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--format` | `incidents` | `incidents` (ServiceNow) or `cirs`; also adapts the LLM prompt wording |
+| `--format` | `incidents` | `incidents` (ServiceNow) or `survey`; also adapts the LLM prompt wording |
 | `--input` | `cleaned_<format>.json` | cleaned input from the preprocessor |
 | `--output-dir` | `cluster_output/<format>/<approach>` | output folder |
 | `--hypotheses-file` | `hypotheses/<format>.json` | hypothesis clusters; the evaluation is skipped if the file is missing |
@@ -95,9 +96,9 @@ If the server does not report the context length, set it with
 | Format | Preprocessor | One document = |
 |---|---|---|
 | ServiceNow incidents (Excel) | `naive/preprocess_incidents.py` | one incident: short description + description + work notes |
-| CIRS (Excel or CSV) | `naive/preprocess_cirs.py` | one CIRS report: all free-text answers, each prefixed with its question |
+| EHR survey among clinicians (Excel or CSV) | `naive/preprocess_survey.py` | one respondent: all free-text answers, each prefixed with its question |
 
-The CIRS preprocessor:
+The survey preprocessor:
 - Uses the RespondentID as the document ID.
 - Drops empty answers and placeholders like `-` or `keine`.
 - Keeps all metadata columns (specialty, clinical background, rating and
@@ -170,8 +171,8 @@ hypothesis IDs, so no map from hypothesis to cluster ID is needed.
 An algorithmic cluster that holds no hypothesis ID is marked `new_topic` in
 `clusters.csv`. These are topics outside your hypotheses.
 
-`hypotheses/cirs.json` does not exist yet. Until it does, the evaluation is
-skipped for CIRS.
+`hypotheses/survey.json` does not exist yet. Until it does, the evaluation is
+skipped for the survey.
 
 ## Troubleshooting
 
@@ -190,5 +191,5 @@ bash tests/smoke_test.sh
 ```
 
 The test runs all three pipelines on synthetic data in both formats (400
-incidents, 120 CIRS reports) against a mock server. It checks only that
+incidents, 120 survey respondents) against a mock server. It checks only that
 the code runs. It does not check the quality of the clusters.
