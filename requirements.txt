@@ -6,3 +6,4 @@ scikit-learn
 scipy
 umap-learn
 matplotlib
+openpyxl
