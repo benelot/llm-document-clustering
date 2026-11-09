@@ -35,6 +35,23 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4000"))
 JSON_MODE = os.getenv("JSON_MODE", "0").lower() == "1"
 LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "8"))
 LLM_RETRIES = int(os.getenv("LLM_RETRIES", "3"))
+LLM_THINKING = os.getenv("LLM_THINKING", "0").lower() in ("1", "true", "yes")
+
+
+class NoRetryError(RuntimeError):
+    """An error that a plain retry with the same request cannot fix."""
+
+
+def _thinking_switch(payload, messages):
+    """Turn the model's hidden thinking off, unless --llm-thinking is set.
+    Two switches: chat_template_kwargs (vLLM, Qwen3 chat templates) and
+    the /no_think soft switch in the user turn (older Qwen3 models)."""
+    if LLM_THINKING:
+        return
+    payload["chat_template_kwargs"] = {"enable_thinking": False}
+    for m in messages:
+        if m["role"] == "user" and not m["content"].startswith("/no_think"):
+            m["content"] = "/no_think " + m["content"]
 
 # Context window of the chat model, in tokens. Set by setup_context():
 # read from the server (/v1/models -> max_model_len), else the fallback.
@@ -63,6 +80,8 @@ def _with_retries(fn, what):
     for attempt in range(LLM_RETRIES + 1):
         try:
             return fn()
+        except NoRetryError:
+            raise
         except Exception as e:  # network, HTTP, parse errors
             last = e
             if attempt < LLM_RETRIES:
@@ -80,10 +99,9 @@ def chat(system, user, temperature=None, max_tokens=None):
     """One chat call. Returns the content string."""
     temperature = LLM_TEMPERATURE if temperature is None else temperature
     max_tokens = max_tokens or LLM_MAX_TOKENS
-    # Qwen3 thinking models: /no_think disables the hidden reasoning chain.
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": "/no_think " + user},
+        {"role": "user", "content": user},
     ]
     payload = {
         "model": VLLM_LLM_MODEL,
@@ -91,20 +109,35 @@ def chat(system, user, temperature=None, max_tokens=None):
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    _thinking_switch(payload, messages)
     if JSON_MODE:
         payload["response_format"] = {"type": "json_object"}
 
-    data = post_json(VLLM_LLM_URL, payload, timeout=max(600, TIMEOUT_SECONDS))
-    try:
-        choice = data["choices"][0]
-    except Exception as e:
-        raise RuntimeError(f"Bad LLM response shape: {str(data)[:500]}") from e
-    content = choice.get("message", {}).get("content")
-    if content is None or not content.strip():
-        raise RuntimeError(
-            f"LLM returned empty content. finish_reason={choice.get('finish_reason')}."
-        )
-    return content
+    prompt_tokens = (len(system) + len(user)) / CHARS_PER_TOKEN
+    room = int(LLM_CONTEXT_TOKENS - prompt_tokens - CONTEXT_SAFETY_TOKENS)
+    for attempt in range(2):
+        data = post_json(VLLM_LLM_URL, payload, timeout=max(600, TIMEOUT_SECONDS))
+        try:
+            choice = data["choices"][0]
+        except Exception as e:
+            raise RuntimeError(f"Bad LLM response shape: {str(data)[:500]}") from e
+        content = choice.get("message", {}).get("content")
+        if content is not None and content.strip():
+            return content
+        finish = choice.get("finish_reason")
+        if finish != "length":
+            raise RuntimeError(f"LLM returned empty content. finish_reason={finish}.")
+        # The answer budget ran out before any answer text: usually hidden
+        # thinking. Try once more with double the budget, if the context allows.
+        bigger = min(payload["max_tokens"] * 2, room)
+        if attempt == 0 and bigger > payload["max_tokens"]:
+            payload["max_tokens"] = bigger
+            continue
+        break
+    raise NoRetryError(
+        f"LLM returned empty content: the answer budget of {payload['max_tokens']} tokens "
+        "ran out before any answer text. The model probably still thinks. Try "
+        "--llm-max-tokens 8000 or more, or a model without thinking.")
 
 
 def parse_json_response(text):
@@ -148,16 +181,24 @@ def map_concurrent(fn, items, concurrency=None, desc="llm"):
     concurrency = concurrency or LLM_CONCURRENCY
     items = list(items)
     results = [None] * len(items)
-    done = 0
+    done = ok = no_retry = 0
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
         futs = {ex.submit(fn, it): i for i, it in enumerate(items)}
         for f in as_completed(futs):
             i = futs[f]
             try:
                 results[i] = f.result()
+                ok += 1
             except Exception as e:
                 print(f"[{desc}] item {i} failed: {str(e)[:200]}")
                 results[i] = e
+                no_retry += isinstance(e, NoRetryError)
+                # the same unfixable error again and again, nothing worked: stop
+                if no_retry >= 3 and ok == 0:
+                    for other in futs:
+                        other.cancel()
+                    raise SystemExit(f"error: [{desc}] stopped after {no_retry} failures "
+                                     f"and no success:\n  {e}")
             done += 1
             if done % max(1, len(items) // 20) == 0 or done == len(items):
                 print(f"[{desc}] {done}/{len(items)}")
@@ -172,8 +213,10 @@ def check_chat_server():
     """One tiny chat request at startup. Stops the run with a clear message
     if the server cannot be reached, rejects the key or does not know the
     model, instead of failing later in every call."""
-    payload = {"model": VLLM_LLM_MODEL, "max_tokens": 20, "temperature": 0,
-               "messages": [{"role": "user", "content": "/no_think Antworte nur mit OK."}]}
+    messages = [{"role": "user", "content": "Antworte nur mit OK."}]
+    payload = {"model": VLLM_LLM_MODEL, "max_tokens": 200, "temperature": 0,
+               "messages": messages}
+    _thinking_switch(payload, messages)
     try:
         data = post_json(VLLM_LLM_URL, payload, timeout=min(120, TIMEOUT_SECONDS))
         if not data.get("choices"):
@@ -183,7 +226,14 @@ def check_chat_server():
             f"error: chat server check failed for --llm-url {VLLM_LLM_URL} "
             f"with --llm-model {VLLM_LLM_MODEL}:\n  {str(e)[:500]}\n"
             "Check the URL, the model name and VLLM_API_KEY.")
+    msg = data["choices"][0].get("message", {})
+    content = (msg.get("content") or "").strip()
+    thinks = bool(msg.get("reasoning_content") or msg.get("reasoning")) or "<think>" in content
     print(f"[check] chat server OK: {VLLM_LLM_URL} ({VLLM_LLM_MODEL})")
+    if not LLM_THINKING and (thinks or not content):
+        print("[check] WARNING: the model still thinks although thinking is switched off "
+              f"(answer: {content[:60]!r}). Answers may come back empty. If so, raise "
+              "--llm-max-tokens (e.g. 8000) or use a model without thinking.")
 
 
 def detect_context_tokens():

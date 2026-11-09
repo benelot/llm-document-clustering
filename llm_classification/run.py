@@ -136,6 +136,10 @@ def stage_generate(df):
     raw = [r for r in res if not isinstance(r, Exception)]
     print(f"[generate] {sum(len(r) for r in raw)} raw labels from "
           f"{len(raw)}/{len(batches)} batches")
+    if not any(raw):
+        raise SystemExit("error: label generation produced no labels. See the errors above.")
+    if len(raw) < len(batches) * 0.8:
+        print(f"[generate] WARNING: {len(batches) - len(raw)} of {len(batches)} batches failed")
     _write_json(path, raw)
     return raw
 

@@ -188,6 +188,7 @@ naive/
 |---|---|
 | `socket.gaierror: Temporary failure in name resolution` | Transient WSL2 DNS glitch. Re-run, or `sudo systemctl restart systemd-resolved` |
 | `HTTP 401 Unauthorized` from vLLM | `VLLM_API_KEY` not set or wrong |
+| `LLM returned empty content` / `finish_reason=length` | the model thinks despite the switch-off; raise `--llm-max-tokens` or use a model without thinking |
 | `HDBSCAN produced mostly noise` | Script auto-falls back to DBSCAN. If still bad, lower `--hdbscan-min-cluster-size` to `5` |
 | Qwen returns non-JSON | Script falls back to a "Manual review required" summary. Lower `--llm-temperature` to `0.0` |
 | Embedding response has unexpected shape | Inspect the raw response of the embedding endpoint; `extract_embeddings()` handles the common formats |

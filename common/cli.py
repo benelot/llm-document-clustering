@@ -87,6 +87,9 @@ def add_common_args(parser, embeddings=True, llm=True):
         add_flag(g, "--chars-per-token", "CHARS_PER_TOKEN", 3.0, float,
                  "estimate used to turn the token budget into characters")
         add_flag(g, "--json-mode", "JSON_MODE", False, bool, "request response_format=json_object")
+        add_flag(g, "--llm-thinking", "LLM_THINKING", False, bool,
+                 "let the model think before answering (slower, needs a large "
+                 "--llm-max-tokens); off sends enable_thinking=false and /no_think")
         add_flag(g, "--timeout", "TIMEOUT_SECONDS", 300, int, "HTTP timeout in seconds")
         add_flag(g, "--llm-name-check", "LLM_NAME_CHECK", True, bool,
                  "let the LLM judge if cluster names match the hypothesis cluster names")
@@ -140,6 +143,7 @@ def apply_common(args, approach):
         vllm.LLM_MAX_TOKENS = args.llm_max_tokens
         vllm.JSON_MODE = args.json_mode
         vllm.TIMEOUT_SECONDS = args.timeout
+        vllm.LLM_THINKING = args.llm_thinking
         vllm.CHARS_PER_TOKEN = args.chars_per_token
     return args
 

@@ -138,6 +138,17 @@ class H(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(raw)
                 return
+            if body.get("chat_template_kwargs", {}).get("enable_thinking") is not False:
+                # behave like a thinking model: budget used up by hidden reasoning
+                out = {"choices": [{"message": {"content": None, "reasoning_content": "hmm " * 50},
+                                    "finish_reason": "length"}]}
+                raw = json.dumps(out).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
             content = json.dumps(answer(user), ensure_ascii=False)
             if rnd.random() < 0.05:
                 content = content[: len(content) // 2]  # broken JSON

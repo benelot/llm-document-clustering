@@ -66,6 +66,7 @@ also falls back to an environment variable, which `--help` shows as
 | `--embed-url`, `--embed-model` | localhost, `Qwen/Qwen3-Embedding-4B` | embedding endpoint |
 | `--llm-url`, `--llm-model` | localhost, `Qwen/Qwen3.8-27B` | chat endpoint |
 | `--llm-concurrency` | `8` | parallel requests; vLLM batches them on the server |
+| `--llm-thinking` / `--no-llm-thinking` | off | let the model think before answering; off sends `enable_thinking=false` |
 | `--llm-context-tokens` | `0` = ask the server | context length of the chat model; read from `/v1/models` (`max_model_len`), fallback 32768 |
 | `--llm-name-check` / `--no-llm-name-check` | on | LLM judges if cluster names match the hypothesis cluster names |
 | `--resume` / `--no-resume` | on | reuse saved stage results |
@@ -171,6 +172,15 @@ An algorithmic cluster that holds no hypothesis ID is marked `new_topic` in
 
 `hypotheses/cirs.json` does not exist yet. Until it does, the evaluation is
 skipped for CIRS.
+
+## Troubleshooting
+
+| Message | Meaning and fix |
+|---|---|
+| `--llm-url must be a full URL` | the URL is wrong, often a model name; set `--llm-url` / `VLLM_LLM_URL` to `http://<host>:<port>/v1/chat/completions` |
+| `chat server check failed` | server not reachable, wrong `--llm-model` or wrong `VLLM_API_KEY` |
+| `answer budget ... ran out before any answer text` | the model spends its answer budget on hidden thinking. Thinking is switched off by default (`enable_thinking=false` and `/no_think`). If the model ignores this, raise `--llm-max-tokens` (e.g. 8000) or use a model without thinking. |
+| `[check] WARNING: the model still thinks` | same as above, detected at startup |
 
 ## Smoke test (no vLLM needed)
 

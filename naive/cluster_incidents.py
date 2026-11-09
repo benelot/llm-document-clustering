@@ -477,18 +477,16 @@ def cluster_vectors(X):
 def llm_generate(messages, temperature=LLM_TEMPERATURE, max_tokens=None):
     max_tokens = max_tokens or LLM_MAX_TOKENS
     # Qwen3 thinking models spend tokens on a hidden reasoning chain and can
-    # return content=null if that chain eats the budget. Disable thinking:
-    # /no_think in the user turn is the portable, version-proof switch.
-    for m in messages:
-        if m["role"] == "user":
-            m["content"] = "/no_think " + m["content"]
-
+    # return content=null if that chain eats the budget. Disable thinking
+    # (unless --llm-thinking): chat_template_kwargs + /no_think.
     payload = {
         "model": VLLM_LLM_MODEL,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    from common import vllm as _vllm
+    _vllm._thinking_switch(payload, messages)
 
     if JSON_MODE:
         payload["response_format"] = {"type": "json_object"}
