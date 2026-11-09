@@ -147,6 +147,10 @@ All via environment variables. Defaults work for ~3,500 incidents.
 | `MAX_CHARS_PER_INCIDENT` | `1500` | — | important details cut off |
 | `LLM_TEMPERATURE` | `0.1` | — | summaries inconsistent |
 | `DBSCAN_EPS_PERCENTILE` | `75` | — | fallback clusters too broad |
+| `DIM_REDUCTION` | `none` | — | — (`none`, `pca` or `umap`; reduces dims before clustering, `umap` recommended) |
+| `DIMRED_N_COMPONENTS` | `10` | clusters merge too much | too much noise |
+| `DIMRED_UMAP_N_NEIGHBORS` | `15` | clusters too fragmented | clusters too broad |
+| `DIMRED_UMAP_MIN_DIST` | `0.0` | — | — (keep `0.0` for clustering) |
 
 ## Limitations
 

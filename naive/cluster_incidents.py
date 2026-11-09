@@ -62,6 +62,15 @@ HDBSCAN_MIN_CLUSTER_SIZE = int(os.getenv("HDBSCAN_MIN_CLUSTER_SIZE", "10"))
 HDBSCAN_MIN_SAMPLES = int(os.getenv("HDBSCAN_MIN_SAMPLES", "3"))
 DBSCAN_EPS_PERCENTILE = float(os.getenv("DBSCAN_EPS_PERCENTILE", "75"))
 
+# Optional dimension reduction before clustering: "none", "pca" or "umap".
+# HDBSCAN density estimates degrade in high dimensions (1024-2560 dims);
+# UMAP to ~5-15 dims usually gives fewer noise points and stabler clusters.
+DIM_REDUCTION = os.getenv("DIM_REDUCTION", "none").lower()
+DIMRED_N_COMPONENTS = int(os.getenv("DIMRED_N_COMPONENTS", "10"))
+DIMRED_UMAP_N_NEIGHBORS = int(os.getenv("DIMRED_UMAP_N_NEIGHBORS", "15"))
+DIMRED_UMAP_MIN_DIST = float(os.getenv("DIMRED_UMAP_MIN_DIST", "0.0"))
+DIMRED_RANDOM_STATE = int(os.getenv("DIMRED_RANDOM_STATE", "42"))
+
 # LLM labeling
 MIN_LABEL_CLUSTER_SIZE = int(os.getenv("MIN_LABEL_CLUSTER_SIZE", "5"))
 MAX_INCIDENTS_PER_CLUSTER = int(os.getenv("MAX_INCIDENTS_PER_CLUSTER", "8"))
@@ -280,6 +289,46 @@ def embed_texts(texts):
         return embed_texts_local(texts)
     else:
         raise ValueError(f"Unknown EMBED_BACKEND: {EMBED_BACKEND}. Use 'api' or 'local'.")
+
+
+# ----------------------------------------------------------------------
+# DIMENSION REDUCTION (optional, before clustering)
+# ----------------------------------------------------------------------
+
+def reduce_dimensions(X):
+    """Reduce embeddings before clustering, controlled by DIM_REDUCTION."""
+    method = DIM_REDUCTION
+    if method in ("", "none"):
+        return X
+
+    n_comp = min(DIMRED_N_COMPONENTS, X.shape[1], max(2, X.shape[0] - 2))
+
+    if method == "pca":
+        from sklearn.decomposition import PCA
+        pca = PCA(n_components=n_comp, random_state=DIMRED_RANDOM_STATE)
+        out = pca.fit_transform(X)
+        print(f"[dimred] PCA {X.shape[1]} -> {n_comp} dims "
+              f"(explained variance {pca.explained_variance_ratio_.sum():.1%})")
+        return out.astype(np.float32)
+
+    if method == "umap":
+        try:
+            import umap
+        except ImportError as e:
+            raise RuntimeError("umap-learn is not installed. "
+                               "Install it or set DIM_REDUCTION=none/pca.") from e
+        reducer = umap.UMAP(
+            n_components=n_comp,
+            n_neighbors=DIMRED_UMAP_N_NEIGHBORS,
+            min_dist=DIMRED_UMAP_MIN_DIST,
+            metric="cosine",
+            random_state=DIMRED_RANDOM_STATE,
+        )
+        out = reducer.fit_transform(X)
+        print(f"[dimred] UMAP {X.shape[1]} -> {n_comp} dims")
+        return out.astype(np.float32)
+
+    raise ValueError(f"Unknown DIM_REDUCTION: {method}. Use 'none', 'pca' or 'umap'.")
 
 
 # ----------------------------------------------------------------------
@@ -568,7 +617,7 @@ def main():
     vectors = embed_texts(texts)
 
     print("Clustering embeddings...")
-    labels = cluster_vectors(vectors)
+    labels = cluster_vectors(reduce_dimensions(vectors))
 
     df["cluster_id"] = labels
 
