@@ -84,6 +84,20 @@ export CLEANED_FILE="cleaned_incidents.json"
 export OUTPUT_DIR="cluster_output"
 ```
 
+## Other input format: CIRS / EHR survey
+
+`preprocess_cirs.py` converts a CIRS / EHR survey export (Excel or CSV) into
+the same format. Then set `CLEANED_FILE` and `DATA_PROFILE=cirs`. See the
+root `README.md`, section Input formats.
+
+```bash
+python preprocess_cirs.py cirs.xlsx cleaned_cirs.csv
+```
+
+```bash
+CLEANED_FILE=cleaned_cirs.json DATA_PROFILE=cirs python cluster_incidents.py
+```
+
 ## Running the pipeline
 
 ```bash

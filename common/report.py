@@ -25,8 +25,23 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from common.hypotheses import EXAMPLES
+from common.profile import P
 
-META_COLS = ["priority", "status", "assignment_group", "department", "created_at"]
+# Columns never copied as metadata into assignments.csv
+RESERVED = {"incident_id", "consolidated_text", "cluster_id", "cluster_name", "is_noise",
+            "umap_x", "umap_y", "text_preview"}
+
+
+def _meta_cols(df):
+    """All non-empty metadata columns, whatever the input format."""
+    cols = []
+    for c in df.columns:
+        if c in RESERVED:
+            continue
+        vals = df[c].dropna().astype(str).str.strip()
+        if (vals != "").any():
+            cols.append(c)
+    return cols
 UMAP_RANDOM_STATE = int(os.getenv("UMAP_RANDOM_STATE", "42"))
 
 
@@ -173,6 +188,7 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     df = df.copy()
+    meta_cols = _meta_cols(df)
     labels = np.asarray(labels).astype(int)
     df["cluster_id"] = labels
     names = {cid: str(info.get("cluster_name", f"Cluster {cid}"))
@@ -182,10 +198,16 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
     for k, v in (extra_cols or {}).items():
         df[k] = list(v)
 
-    # Validation
-    val_rows, val_summary, cluster_hits = validate_hypotheses(df, names, noise_name)
-    val_rows.to_csv(out_dir / "validation_report.csv", index=False, encoding="utf-8")
-    val_summary.to_csv(out_dir / "validation_summary.csv", index=False, encoding="utf-8")
+    # Validation (only if the gold-standard example IDs occur in this dataset)
+    ids = set(df["incident_id"].astype(str))
+    has_gold = any(i in ids for incs in EXAMPLES.values() for i in incs)
+    if has_gold:
+        val_rows, val_summary, cluster_hits = validate_hypotheses(df, names, noise_name)
+        val_rows.to_csv(out_dir / "validation_report.csv", index=False, encoding="utf-8")
+        val_summary.to_csv(out_dir / "validation_summary.csv", index=False, encoding="utf-8")
+    else:
+        val_summary, cluster_hits = None, {}
+        print("[report] no hypothesis example IDs in this dataset, validation skipped")
 
     # UMAP
     if vectors is not None:
@@ -194,14 +216,14 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
         df["umap_x"], df["umap_y"] = coords[:, 0], coords[:, 1]
         n_noise = int((labels == -1).sum())
         title = (f"{method}: {len(names)} clusters, "
-                 f"{len(df) - n_noise}/{len(df)} incidents clustered, "
+                 f"{len(df) - n_noise}/{len(df)} {P['label_en'].lower()} clustered, "
                  f"{n_noise} {noise_name}")
         plot_umap(coords, labels, names, title, out_dir / "umap_clusters.png", noise_name)
 
     # Assignments, one row per incident
     cols = ["incident_id", "cluster_id", "cluster_name", "is_noise"] \
-        + [c for c in META_COLS if c in df.columns] \
-        + list((extra_cols or {}).keys()) \
+        + meta_cols \
+        + [c for c in (extra_cols or {}) if c not in meta_cols] \
         + [c for c in ("umap_x", "umap_y") if c in df.columns]
     df["text_preview"] = df["consolidated_text"].str.slice(0, 300)
     df[cols + ["text_preview"]].to_csv(out_dir / "assignments.csv", index=False,
@@ -222,7 +244,7 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
             "share_pct": round(100 * len(g) / len(df), 1),
             "top_examples": ", ".join(g["incident_id"].head(3)),
             "hypothesis_categories": ", ".join(f"{c} ({n})" for c, n in hits.most_common()),
-            "new_topic": not hits,
+            "new_topic": (not hits) if has_gold else "",
             **info,
         })
     clusters = pd.DataFrame(rows).sort_values("size", ascending=False)
@@ -230,23 +252,29 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
 
     # Summary
     n_noise = int((labels == -1).sum())
+    what = P["label_en"]
     lines = [
         f"Method: {method}",
-        f"Incidents total:     {len(df)}",
-        f"Incidents clustered: {len(df) - n_noise} ({100 * (len(df) - n_noise) / len(df):.1f}%)",
-        f"Incidents {noise_name}: {n_noise} ({100 * n_noise / len(df):.1f}%)",
+        f"{what} total:     {len(df)}",
+        f"{what} clustered: {len(df) - n_noise} ({100 * (len(df) - n_noise) / len(df):.1f}%)",
+        f"{what} {noise_name}: {n_noise} ({100 * n_noise / len(df):.1f}%)",
         f"Clusters:            {len(names)}",
-        f"New topics (no hypothesis example inside): {int(clusters['new_topic'].sum())}",
-        "",
-        "Hypothesis validation:",
     ]
-    for _, r in val_summary.iterrows():
-        best = f" -> C{r['best_cluster_id']} {r['best_cluster_name']}" if r["best_cluster_name"] else ""
-        lines.append(f"  {r['hypothesis_category']:<28} {r['verdict']:<24} "
-                     f"{r['examples_in_best_cluster']}/{r['examples_in_dataset']}{best}")
+    if has_gold:
+        lines += [
+            f"New topics (no hypothesis example inside): {int(clusters['new_topic'].sum())}",
+            "",
+            "Hypothesis validation:",
+        ]
+        for _, r in val_summary.iterrows():
+            best = f" -> C{r['best_cluster_id']} {r['best_cluster_name']}" if r["best_cluster_name"] else ""
+            lines.append(f"  {r['hypothesis_category']:<28} {r['verdict']:<24} "
+                         f"{r['examples_in_best_cluster']}/{r['examples_in_dataset']}{best}")
+    else:
+        lines += ["Hypothesis validation: skipped (no example IDs in this dataset)"]
     lines += ["", "Clusters (by size):"]
     for _, r in clusters.iterrows():
-        tag = "NEW " if r["new_topic"] else "    "
+        tag = "NEW " if r["new_topic"] is True else "    "
         lines.append(f"  {tag}C{r['cluster_id']:<4} {r['size']:>5}  {r['cluster_name']}")
     if params:
         lines += ["", "Parameters:"] + [f"  {k} = {v}" for k, v in params.items()]

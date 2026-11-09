@@ -1,6 +1,8 @@
 # Incident data and generated outputs (hospital data, never commit)
 *.xlsx
 cleaned_incidents.*
+cleaned_cirs.*
+cirs*.csv
 cluster_output/
 
 __pycache__/

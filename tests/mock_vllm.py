@@ -23,6 +23,7 @@ KEYS = {
     "bestellung": "Bestellung und Verrechnung", "verrechnung": "Bestellung und Verrechnung",
     "ansicht": "Ansichten in EPIC", "darstellung": "Ansichten in EPIC",
     "login": "Login und Passwort", "passwort": "Login und Passwort",
+    "schulung": "Schulung", "ki ": "KI-Potenzial",
 }
 VARIANTS = {  # raw label variants, to test merging
     "Drucker und Etiketten": ["Drucker und Etiketten", "Druckerprobleme", "Etikettendruck"],
@@ -74,19 +75,27 @@ def answer(user):
             if c not in canon:
                 canon.append(c)
         return {"labels": [{"name": c, "description": f"Meldungen zu {c}"} for c in canon]}
-    if "Ordne jede Meldung" in user:
+    if "Ordne jede" in user:
         themes = dict((name.split(" - ")[0], int(n)) for n, name in
                       re.findall(r"^(\d+): (.*)$", user, flags=re.M))
         return {"assignments": {i: themes.get(topic(t), 0) for i, t in items(user)}}
-    if "Meldung A:" in user:
-        a = user.split("Meldung A:")[1].split("Meldung B:")[0]
-        b = user.split("Meldung B:")[1]
+    m = re.search(r"\n(\w+) A:\n(.*)\n\1 B:\n(.*)", user, flags=re.S)
+    if m:
+        a, b = m.group(2), m.group(3)
         return {"same": topic(a) is not None and topic(a) == topic(b)}
     if "Benenne das gemeinsame Thema" in user:
-        tops = [topic(t) for t in user.split("Meldungen:")[1].split("---")]
+        body = re.split(r"\n(?:Meldungen|Antworten):\n", user)[-1]
+        tops = [topic(t) for t in body.split("---")]
         tops = [t for t in tops if t] or ["Diverses"]
         name = max(set(tops), key=tops.count)
         return {"cluster_name": name, "description": f"Gemeinsames Thema: {name}"}
+    if "Analyze the following cluster" in user:  # naive/cluster_incidents.py
+        tops = [topic(t) for t in re.findall(r"^Text: (.*)$", user, flags=re.M)]
+        tops = [t for t in tops if t] or ["Diverses"]
+        name = max(set(tops), key=tops.count)
+        return {"cluster_name": name, "root_cause": "mock", "affected_area": "mock",
+                "recommended_measure": "mock", "urgency": "medium", "rationale": "mock",
+                "most_relevant_incident_ids": []}
     return {"error": "unknown prompt"}
 
 

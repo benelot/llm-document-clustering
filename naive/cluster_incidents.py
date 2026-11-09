@@ -71,6 +71,21 @@ DIMRED_UMAP_N_NEIGHBORS = int(os.getenv("DIMRED_UMAP_N_NEIGHBORS", "15"))
 DIMRED_UMAP_MIN_DIST = float(os.getenv("DIMRED_UMAP_MIN_DIST", "0.0"))
 DIMRED_RANDOM_STATE = int(os.getenv("DIMRED_RANDOM_STATE", "42"))
 
+# Kind of input text: "incidents" (preprocess_incidents.py, default) or
+# "cirs" (preprocess_cirs.py). Only changes the wording of the LLM prompt.
+DATA_PROFILE = os.getenv("DATA_PROFILE", "incidents").lower()
+_PROFILE_TEXT = {
+    "incidents": ("You analyze incident reports and identify systemic risks that "
+                  "require hospital-wide action.",
+                  "hospital incident reports"),
+    "cirs": ("You analyze free-text answers of hospital staff about the clinical "
+             "information system (EHR), from CIRS reports and surveys, and identify "
+             "systemic problems and improvements that require hospital-wide action.",
+             "free-text answers (CIRS / EHR survey)"),
+}
+if DATA_PROFILE not in _PROFILE_TEXT:
+    raise ValueError(f"Unknown DATA_PROFILE: {DATA_PROFILE}. Use incidents or cirs.")
+
 # LLM labeling
 MIN_LABEL_CLUSTER_SIZE = int(os.getenv("MIN_LABEL_CLUSTER_SIZE", "5"))
 MAX_INCIDENTS_PER_CLUSTER = int(os.getenv("MAX_INCIDENTS_PER_CLUSTER", "8"))
@@ -511,25 +526,34 @@ def label_cluster(group):
         if len(text) > MAX_CHARS_PER_INCIDENT:
             text = text[:MAX_CHARS_PER_INCIDENT] + "..."
 
-        incident_lines.append(
-            f"ID: {row.get('incident_id', '')}\n"
-            f"Priority: {row.get('priority', '')}\n"
-            f"Assignment group: {row.get('assignment_group', '')}\n"
-            f"Department: {row.get('department', '')}\n"
-            f"Status: {row.get('status', '')}\n"
-            f"Text: {text}"
-        )
+        if DATA_PROFILE == "cirs":
+            incident_lines.append(
+                f"ID: {row.get('incident_id', '')}\n"
+                f"Question: {row.get('question', '')}\n"
+                f"Clinical background: {row.get('clinical_background', '')}\n"
+                f"Specialty: {row.get('specialty', '')}\n"
+                f"Text: {text}"
+            )
+        else:
+            incident_lines.append(
+                f"ID: {row.get('incident_id', '')}\n"
+                f"Priority: {row.get('priority', '')}\n"
+                f"Assignment group: {row.get('assignment_group', '')}\n"
+                f"Department: {row.get('department', '')}\n"
+                f"Status: {row.get('status', '')}\n"
+                f"Text: {text}"
+            )
 
     incident_block = "\n---\n".join(incident_lines)
 
     system_prompt = (
         "You are a hospital patient-safety analyst. "
-        "You analyze incident reports and identify systemic risks that require hospital-wide action. "
+        f"{_PROFILE_TEXT[DATA_PROFILE][0]} "
         "Return ONLY valid JSON. Do not include markdown."
     )
 
     user_prompt = f"""
-Analyze the following cluster of hospital incident reports.
+Analyze the following cluster of {_PROFILE_TEXT[DATA_PROFILE][1]}.
 
 Return JSON with exactly these keys:
 - "cluster_name": short descriptive label

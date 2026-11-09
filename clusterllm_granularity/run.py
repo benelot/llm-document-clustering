@@ -40,6 +40,7 @@ from common import vllm                                          # noqa: E402
 from common.data import load_cleaned, truncate                   # noqa: E402
 from common.embeddings import embed_texts, reduce_dimensions     # noqa: E402
 from common.report import write_report, relabel_by_size          # noqa: E402
+from common.profile import P                                     # noqa: E402
 
 # ----------------------------------------------------------------------
 # CONFIG
@@ -63,19 +64,9 @@ FORCE_K = int(os.getenv("FORCE_K", "0"))  # >0: skip the LLM pair stage
 NAME_SAMPLES = int(os.getenv("NAME_SAMPLES", "8"))
 NAME_MAX_CHARS = int(os.getenv("NAME_MAX_CHARS", "1000"))
 
-GRANULARITY_QUESTION = os.getenv(
-    "GRANULARITY_QUESTION",
-    "Gehören diese beiden Meldungen zur selben Problemkategorie, d.h. "
-    "betreffen sie dasselbe System bzw. dieselbe Funktion und dieselbe Art "
-    "von Problem? Unterschiedliche Patienten, Personen oder Zeitpunkte spielen "
-    "keine Rolle.",
-)
+GRANULARITY_QUESTION = os.getenv("GRANULARITY_QUESTION", P["granularity_question"])
 
-DOMAIN = (
-    "Du analysierst IT-Incident-Meldungen eines Spitals (Service Desk, "
-    "klinische Systeme wie EPIC, Medikation, Geräte, Drucker usw.). "
-    "Antworte ausschliesslich mit gültigem JSON, ohne Markdown."
-)
+DOMAIN = P["system"]
 
 
 # ----------------------------------------------------------------------
@@ -131,10 +122,10 @@ def merge_steps(Z, nodes, n):
 def _pair_prompt(t1, t2):
     return f"""{GRANULARITY_QUESTION}
 
-Meldung A:
+{P['item']} A:
 {truncate(t1, PAIR_MAX_CHARS)}
 
-Meldung B:
+{P['item']} B:
 {truncate(t2, PAIR_MAX_CHARS)}
 
 Gib JSON zurück: {{"same": true}} oder {{"same": false}}
@@ -227,13 +218,13 @@ def plot_k(scores, p_same, best, out_png):
 
 def _name_prompt(texts):
     items = "\n---\n".join(truncate(t, NAME_MAX_CHARS) for t in texts)
-    return f"""Diese Meldungen gehören zu einem Cluster. Benenne das gemeinsame Thema.
+    return f"""Diese {P['items']} gehören zu einem Cluster. Benenne das gemeinsame Thema.
 
 Gib JSON zurück:
 {{"cluster_name": "2 bis 6 Wörter, Deutsch",
-  "description": "1 Satz: welches Problem die Meldungen gemeinsam haben"}}
+  "description": "1 Satz: welches Thema die {P['items']} gemeinsam haben"}}
 
-Meldungen:
+{P['items']}:
 {items}
 """
 

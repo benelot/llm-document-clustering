@@ -39,6 +39,47 @@ python clusterllm_granularity/run.py
 Both approaches run their LLM calls concurrently. Set the number of parallel
 requests with `LLM_CONCURRENCY` (default 8).
 
+## Input formats
+
+The pipelines read one cleaned JSON file (`CLEANED_FILE`). Two preprocessors
+write it:
+
+| Format | Preprocessor | Output | `DATA_PROFILE` |
+|---|---|---|---|
+| IT incidents (Excel export) | `naive/preprocess_incidents.py` | `cleaned_incidents.json` | `incidents` (default) |
+| CIRS / EHR survey (Excel or CSV) | `naive/preprocess_cirs.py` | `cleaned_cirs.json` | `cirs` |
+
+`DATA_PROFILE` adapts the wording of the LLM prompts to the kind of text.
+
+CIRS example:
+
+```bash
+python naive/preprocess_cirs.py cirs.xlsx cleaned_cirs.csv
+```
+
+```bash
+export CLEANED_FILE=cleaned_cirs.json DATA_PROFILE=cirs
+```
+
+```bash
+python llm_classification/run.py
+```
+
+The CIRS preprocessor:
+- Clusters each non-empty free-text answer as one document
+  (`CIRS_UNIT=field`, the default). The ID is `<RespondentID>_<field>`,
+  for example `50000_fix1`. One respondent writes about several topics, so
+  this gives cleaner topics.
+- With `CIRS_UNIT=respondent`, it joins all answers of a person into one
+  document instead.
+- Drops empty answers and placeholders like `-` or `keine`.
+- Keeps all metadata columns (specialty, clinical background, rating, ...).
+  They appear in `assignments.csv`.
+- With `CIRS_INCLUDE_QUESTION=1`, it prefixes each answer with its question.
+
+The hypothesis validation runs only if the example INC IDs occur in the
+data, so it is skipped for CIRS.
+
 ## Outputs
 
 Each approach writes to `cluster_output/<approach>/`:
@@ -76,6 +117,7 @@ A cluster that contains no example INC is marked `new_topic` in
 bash tests/smoke_test.sh
 ```
 
-The test runs both approaches on 400 synthetic incidents against a mock
-server. It checks only that the code runs. It does not check the quality
+The test runs all three pipelines on synthetic data in both formats (400
+incidents, 120 survey respondents) against a mock server. It checks only that the code runs. It does not
+check the quality
 of the clusters.

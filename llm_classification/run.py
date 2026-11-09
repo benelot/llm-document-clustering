@@ -34,6 +34,7 @@ from common import vllm                                   # noqa: E402
 from common.data import load_cleaned, truncate            # noqa: E402
 from common.embeddings import embed_texts                 # noqa: E402
 from common.report import write_report, relabel_by_size   # noqa: E402
+from common.profile import P                              # noqa: E402
 
 # ----------------------------------------------------------------------
 # CONFIG
@@ -63,11 +64,7 @@ PLOT = os.getenv("PLOT", "1") == "1"
 
 NOISE_NAME = "Sonstiges"
 
-DOMAIN = (
-    "Du analysierst IT-Incident-Meldungen eines Spitals (Service Desk, "
-    "klinische Systeme wie EPIC, Medikation, Geräte, Drucker usw.). "
-    "Antworte ausschliesslich mit gültigem JSON, ohne Markdown."
-)
+DOMAIN = P["system"]
 
 
 def _write_json(path, obj):
@@ -87,20 +84,20 @@ def _read_json(path):
 
 def _gen_prompt(texts):
     items = "\n".join(f"[{i + 1}] {truncate(t, GEN_MAX_CHARS)}" for i, t in enumerate(texts))
-    return f"""Hier sind {len(texts)} Incident-Meldungen.
+    return f"""Hier sind {len(texts)} {P['items_long']}.
 
-Finde die Themen, die in diesen Meldungen vorkommen. Ein Thema ist eine
-wiederkehrende Problemkategorie (z.B. eine Systemfunktion, ein Prozess oder
+Finde die Themen, die in diesen {P['items']} vorkommen. Ein Thema ist eine
+wiederkehrende {P['category']} (z.B. eine Systemfunktion, ein Prozess oder
 eine Geräteart), nicht ein Einzelfall. Keine Patientennamen, Daten oder
 Ticketnummern in den Labels.
 
 Regeln:
 - Labels auf Deutsch, 2 bis 6 Wörter.
-- Ein Label pro Thema; mehrere Meldungen können dasselbe Label teilen.
+- Ein Label pro Thema; mehrere {P['items']} können dasselbe Label teilen.
 
 Gib JSON zurück: {{"labels": ["Label 1", "Label 2", ...]}}
 
-Meldungen:
+{P['items']}:
 {items}
 """
 
@@ -139,7 +136,7 @@ def stage_generate(df):
 
 def _merge_chunk_prompt(labels):
     items = "\n".join(f"- {l}" for l in labels)
-    return f"""Hier ist eine Liste von Themen-Labels für Spital-IT-Incidents.
+    return f"""Hier ist eine Liste von Themen-Labels für {P['items_long']} aus einem Spital.
 Fasse Labels zusammen, die dasselbe Thema meinen (Synonyme, andere Wortwahl,
 Teilaspekte desselben Problems). Behalte unterschiedliche Themen getrennt.
 
@@ -152,7 +149,7 @@ Labels:
 
 def _final_merge_prompt(labels_with_counts):
     items = "\n".join(f"- {l}" + (f" ({n}x)" if n else "") for l, n in labels_with_counts)
-    return f"""Hier ist eine Liste von Themen-Labels für Spital-IT-Incidents
+    return f"""Hier ist eine Liste von Themen-Labels für {P['items_long']} aus einem Spital
 (in Klammern, wie oft ein Label vorgeschlagen wurde, falls bekannt).
 
 Erstelle daraus die finale Themenliste mit {TARGET_MIN_LABELS} bis
@@ -162,7 +159,7 @@ Erstelle daraus die finale Themenliste mit {TARGET_MIN_LABELS} bis
 - Die Themen sollen sich klar voneinander abgrenzen.
 - Kein Sammelthema wie "Sonstiges" (das gibt es schon separat).
 - Name auf Deutsch, 2 bis 6 Wörter. Beschreibung: 1 Satz, woran man eine
-  Meldung zu diesem Thema erkennt.
+  {P['item']} zu diesem Thema erkennt.
 
 Gib JSON zurück:
 {{"labels": [{{"name": "...", "description": "..."}}, ...]}}
@@ -236,16 +233,16 @@ def _classify_prompt(label_list, texts):
                        for i, l in enumerate(label_list))
     items = "\n".join(f"[{i + 1}] {truncate(t, CLASSIFY_MAX_CHARS)}" for i, t in enumerate(texts))
     example = ", ".join(f'"{i + 1}": <nr>' for i in range(min(len(texts), 3)))
-    return f"""Ordne jede Meldung genau einem Thema zu.
+    return f"""Ordne jede {P['item']} genau einem Thema zu.
 
 Themen:
 0: {NOISE_NAME} - passt zu keinem der Themen
 {labels}
 
-Gib JSON zurück, mit der Themennummer pro Meldung:
+Gib JSON zurück, mit der Themennummer pro {P['item']}:
 {{"assignments": {{{example}{", ..." if len(texts) > 3 else ""}}}}}
 
-Meldungen:
+{P['items']}:
 {items}
 """
 
