@@ -17,6 +17,7 @@ import os
 import re
 import json
 import time
+import threading
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -36,6 +37,27 @@ JSON_MODE = os.getenv("JSON_MODE", "0").lower() == "1"
 LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "8"))
 LLM_RETRIES = int(os.getenv("LLM_RETRIES", "3"))
 LLM_THINKING = os.getenv("LLM_THINKING", "0").lower() in ("1", "true", "yes")
+
+
+# Where failed LLM answers are logged in full (set by the scripts to the
+# output folder); None = no log.
+DEBUG_DIR = None
+_debug_lock = threading.Lock()
+_last = threading.local()  # finish_reason of the last chat() in this thread
+
+
+def log_failed_answer(error, content, prompt=None):
+    if DEBUG_DIR is None:
+        return
+    from pathlib import Path
+    rec = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "error": str(error),
+           "finish_reason": getattr(_last, "finish", None),
+           "answer_chars": len(content or ""), "answer": content,
+           "prompt_start": (prompt or "")[:1500]}
+    with _debug_lock:
+        Path(DEBUG_DIR).mkdir(parents=True, exist_ok=True)
+        with open(Path(DEBUG_DIR) / "llm_errors.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 class NoRetryError(RuntimeError):
@@ -122,9 +144,10 @@ def chat(system, user, temperature=None, max_tokens=None):
         except Exception as e:
             raise RuntimeError(f"Bad LLM response shape: {str(data)[:500]}") from e
         content = choice.get("message", {}).get("content")
+        finish = choice.get("finish_reason")
+        _last.finish = finish
         if content is not None and content.strip():
             return content
-        finish = choice.get("finish_reason")
         if finish != "length":
             raise RuntimeError(f"LLM returned empty content. finish_reason={finish}.")
         # The answer budget ran out before any answer text: usually hidden
@@ -140,17 +163,69 @@ def chat(system, user, temperature=None, max_tokens=None):
         "--llm-max-tokens 8000 or more, or a model without thinking.")
 
 
+def _repair_truncated(text):
+    """Close a JSON object that was cut off: drop the incomplete last element,
+    then add the missing ] and }. Returns a string or None."""
+    stack, in_str, esc, last_ok = [], False, False, None
+    for i, ch in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+                last_ok = (i, list(stack))  # end of a complete string
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "[{":
+            stack.append(ch)
+        elif ch in "]}":
+            if stack:
+                stack.pop()
+            last_ok = (i, list(stack))
+    if last_ok is None:
+        return None
+    i, st = last_ok
+    head = text[:i + 1].rstrip()
+    # a dangling key ("key") without value cannot be closed sensibly
+    if head.endswith('"') and st and st[-1] == "{" and text[i + 1:].lstrip().startswith(":"):
+        return None
+    closers = "".join("]" if c == "[" else "}" for c in reversed(st))
+    return head + closers
+
+
 def parse_json_response(text):
-    """Extract the first JSON object from an LLM answer. Returns None on failure."""
+    """Extract the first JSON object from an LLM answer. Returns None on failure.
+
+    Tolerates text before/after the JSON and repairs a cut-off answer up to
+    its last complete element.
+    """
     if not text:
         return None
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     if "```" in text:
         text = re.sub(r"```(?:json)?", "", text).strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
+    start = text.find("{")
+    if start == -1:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text[start:])
+        return obj if isinstance(obj, dict) else None
+    except json.JSONDecodeError:
+        pass
+    end = text.rfind("}")
+    if end > start:
         try:
             return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+    repaired = _repair_truncated(text[start:])
+    if repaired:
+        try:
+            obj = json.loads(repaired)
+            return obj if isinstance(obj, dict) else None
         except json.JSONDecodeError:
             return None
     return None
@@ -163,11 +238,19 @@ def chat_json(system, user, validate=None, **kw):
     """
     def once():
         content = chat(system, user, **kw)
+        cut = getattr(_last, "finish", None) == "length"
         obj = parse_json_response(content)
+        why = None
         if obj is None:
-            raise ValueError(f"No valid JSON in answer: {content[:200]}")
-        if validate is not None and not validate(obj):
-            raise ValueError(f"JSON failed validation: {content[:200]}")
+            why = "No valid JSON in answer"
+        elif validate is not None and not validate(obj):
+            why = "JSON failed validation"
+        if why:
+            if cut:
+                why += (f" (answer cut at the token limit after {len(content)} characters; "
+                        "the model probably repeats itself)")
+            log_failed_answer(why, content, user)
+            raise ValueError(f"{why}: {content[:150]!r}")
         return obj
     return _with_retries(once, "chat_json")
 

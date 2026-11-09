@@ -125,6 +125,7 @@ def apply_common(args, approach):
     if not args.output_dir:
         args.output_dir = f"cluster_output/{args.format}/{approach}"
     args.output_dir = Path(args.output_dir)
+    vllm.DEBUG_DIR = args.output_dir  # failed LLM answers -> llm_errors.jsonl
     if not args.hypotheses_file:
         args.hypotheses_file = str(REPO_ROOT / "hypotheses" / f"{args.format}.json")
 

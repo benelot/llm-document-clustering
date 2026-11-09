@@ -181,6 +181,7 @@ skipped for CIRS.
 | `chat server check failed` | server not reachable, wrong `--llm-model` or wrong `VLLM_API_KEY` |
 | `answer budget ... ran out before any answer text` | the model spends its answer budget on hidden thinking. Thinking is switched off by default (`enable_thinking=false` and `/no_think`). If the model ignores this, raise `--llm-max-tokens` (e.g. 8000) or use a model without thinking. |
 | `[check] WARNING: the model still thinks` | same as above, detected at startup |
+| `[retry] chat_json failed (No valid JSON ...)` | one bad answer; it is retried up to 3 times. Only `item N failed` is a real failure. Every failed answer is saved in full to `<output-dir>/llm_errors.jsonl`, with `finish_reason` (`length` = cut at the token limit). |
 
 ## Smoke test (no vLLM needed)
 

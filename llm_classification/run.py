@@ -101,6 +101,7 @@ Ticketnummern in den Labels.
 Regeln:
 - Labels auf Deutsch, 2 bis 6 Wörter.
 - Ein Label pro Thema; mehrere {P['items']} können dasselbe Label teilen.
+- Höchstens {max(1, len(texts))} Labels, jedes Label nur einmal.
 
 Gib JSON zurück: {{"labels": ["Label 1", "Label 2", ...]}}
 
@@ -130,7 +131,8 @@ def stage_generate(df):
     def run(batch):
         obj = vllm.chat_json(DOMAIN, _gen_prompt(batch),
                              validate=lambda o: isinstance(o.get("labels"), list))
-        return [str(l).strip() for l in obj["labels"] if str(l).strip()]
+        labels = [str(l).strip() for l in obj["labels"] if str(l).strip()]
+        return list(dict.fromkeys(labels))  # drop repetitions
 
     res = vllm.map_concurrent(run, batches, desc="generate")
     raw = [r for r in res if not isinstance(r, Exception)]
