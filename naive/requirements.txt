@@ -1,0 +1,11 @@
+pandas
+numpy
+requests
+openpyxl
+scikit-learn
+hdbscan
+umap-learn
+matplotlib
+# Only for EMBED_BACKEND=local
+# sentence-transformers
+# torch

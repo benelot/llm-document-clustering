@@ -1,0 +1,8 @@
+# Incident data and generated outputs (hospital data, never commit)
+*.xlsx
+cleaned_incidents.*
+cluster_output/
+
+__pycache__/
+*.pyc
+.venv/
