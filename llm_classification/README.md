@@ -51,8 +51,8 @@ concrete clusters. The texts are in `common/perspectives.py`.
 | `failure-type` | what kind of problem it is, no matter where |
 | `root-cause` | the likely cause |
 | `action` | which measure would fix it, and who is responsible |
-| `med-process-stage` | the step in the medication process (NCC MERP) |
-| `patient-safety` | the type of medication error it causes or enables (WHO ICPS) |
+| `med-process-stage` | the step in the medication process (as in medication error taxonomies, e.g. NCC MERP) |
+| `patient-safety` | the type of medication error it causes or enables (as in patient-safety incident classification, e.g. WHO ICPS) |
 | `contributing-factors` | the system weakness behind it (London Protocol) |
 
 ```bash

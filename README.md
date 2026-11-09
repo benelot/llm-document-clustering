@@ -21,9 +21,9 @@ embeddings and chat. A CIRS format will follow.
 ### Naive (`naive/`)
 
 - **Origin:** the first in-house version of this project. It follows the
-  common pattern "embed, reduce, cluster, then let an LLM name the
-  clusters". BERTopic (Grootendorst, 2022, arXiv 2203.05794) made this
-  pattern popular.
+  common pattern "embed, reduce, cluster, then name the clusters", which
+  BERTopic [1] made popular. BERTopic names clusters with class-based TF-IDF;
+  here an LLM names them.
 - **Essence:**
   1. An embedding model turns every document into a vector.
   2. HDBSCAN finds dense groups of vectors. Documents outside all groups
@@ -34,8 +34,7 @@ embeddings and chat. A CIRS format will follow.
 
 ### LLM classification (`llm_classification/`)
 
-- **Origin:** Chen Huang and Guoxiu He, "Text Clustering as Classification
-  with LLMs", arXiv 2410.00927 (2024). Code:
+- **Origin:** Huang and He [2]. Code:
   https://github.com/ECNU-Text-Computing/Text-Clustering-via-LLM
 - **Essence:** clustering becomes a classification task, with no
   embeddings and no clustering algorithm.
@@ -52,13 +51,12 @@ embeddings and chat. A CIRS format will follow.
 
 ### ClusterLLM granularity (`clusterllm_granularity/`)
 
-- **Origin:** Yuwei Zhang, Zihan Wang and Jingbo Shang, "ClusterLLM: Large
-  Language Models as a Guide for Text Clustering", EMNLP 2023, arXiv
-  2305.14871. Code: https://github.com/zhang-yu-wei/ClusterLLM
+- **Origin:** Zhang, Wang and Shang [3]. Code:
+  https://github.com/zhang-yu-wei/ClusterLLM
 - **Essence:** the paper has two parts. Both ask the LLM small questions
   instead of letting it label everything:
-  - **Perspective:** questions of the form "is B or C closer to A?"
-    fine-tune the embedding model, so that its distances follow the
+  - **Perspective:** triplet questions of the form "does A correspond
+    better to B than to C?" fine-tune the embedding model, so that its distances follow the
     user's notion of a topic. This part is not implemented here, because
     it needs a GPU and a local embedding model.
   - **Granularity** (implemented): a hierarchical clustering tree is
@@ -75,17 +73,49 @@ embeddings and chat. A CIRS format will follow.
 
 ### Shared building blocks
 
-- **UMAP** (McInnes, Healy and Melville, 2018, arXiv 1802.03426): reduces
-  the embeddings to fewer dimensions, for clustering and for the 2D plots.
-- **HDBSCAN** (Campello, Moulavi and Sander, 2013; implementation by
-  McInnes et al.): density-based clustering with noise.
-- The perspectives `med-process-stage`, `patient-safety` and
-  `contributing-factors` use established frameworks from patient safety:
-  the NCC MERP medication use process, the WHO International
-  Classification for Patient Safety, and the London Protocol (Vincent).
+- **UMAP** [4]: reduces the embeddings to fewer dimensions, for clustering
+  and for the 2D plots.
+- **HDBSCAN** [5], Python implementation [6]: density-based clustering
+  with noise.
+- Three perspectives draw on patient-safety concepts. The prompt lists are
+  short paraphrases, not the official category lists of these frameworks.
+  - `contributing-factors`: the contributory factors of the London
+    Protocol [7].
+  - `patient-safety`: medication error types as used in patient-safety
+    incident classification, e.g. the WHO ICPS framework [8].
+  - `med-process-stage`: the stages of the medication use process
+    (prescribing, transcribing/validation, dispensing, administration,
+    monitoring), as used in medication error taxonomies such as NCC MERP [9].
 
 `docs/approaches.md` also compares two approaches that are not
 implemented here (llm_text_clustering, Vectoria).
+
+### References
+
+1. M. Grootendorst. BERTopic: Neural topic modeling with a class-based
+   TF-IDF procedure. arXiv:2203.05794, 2022.
+2. C. Huang, G. He. Text Clustering as Classification with LLMs.
+   arXiv:2410.00927, 2024.
+3. Y. Zhang, Z. Wang, J. Shang. ClusterLLM: Large Language Models as a
+   Guide for Text Clustering. EMNLP 2023. arXiv:2305.14871.
+4. L. McInnes, J. Healy, J. Melville. UMAP: Uniform Manifold Approximation
+   and Projection for Dimension Reduction. arXiv:1802.03426, 2018.
+5. R. J. G. B. Campello, D. Moulavi, J. Sander. Density-Based Clustering
+   Based on Hierarchical Density Estimates. PAKDD 2013, LNCS 7819,
+   pp. 160-172. doi:10.1007/978-3-642-37456-2_14.
+6. L. McInnes, J. Healy, S. Astels. hdbscan: Hierarchical density based
+   clustering. Journal of Open Source Software 2(11):205, 2017.
+   doi:10.21105/joss.00205.
+7. S. Taylor-Adams, C. Vincent. Systems Analysis of Clinical Incidents:
+   The London Protocol. Clinical Safety Research Unit, Imperial College
+   London, 2004.
+8. World Health Organization. Conceptual Framework for the International
+   Classification for Patient Safety, v1.1. WHO/IER/PSP/2010.2, 2009.
+   See also Sherman et al., Int J Qual Health Care 21(1):2-8, 2009,
+   doi:10.1093/intqhc/mzn054.
+9. National Coordinating Council for Medication Error Reporting and
+   Prevention (NCC MERP). Taxonomy of Medication Errors.
+   https://www.nccmerp.org/taxonomy-medication-errors
 
 ## Quick start
 

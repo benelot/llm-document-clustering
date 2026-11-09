@@ -58,7 +58,7 @@ PERSPECTIVES = {
                   "resolve the problem described in this text"),
     },
     "med-process-stage": {
-        "title": "Schritt im Medikationsprozess (NCC MERP)",
+        "title": "Schritt im Medikationsprozess",
         "text": (
             "Gruppiere nach dem Schritt im Medikationsprozess, in dem das Problem "
             "auftritt: Verordnung, Validierung durch die Pharmazie, Richten und "
@@ -70,7 +70,7 @@ PERSPECTIVES = {
                   "logistics) affected by the problem described in this text"),
     },
     "patient-safety": {
-        "title": "Art des Medikationsfehlers (WHO ICPS)",
+        "title": "Art des Medikationsfehlers",
         "text": (
             "Gruppiere nach der Art des Medikationsfehlers, den das Problem verursacht "
             "oder ermöglicht: z.B. falsches Medikament, falsche Dosis, falscher Weg, "
