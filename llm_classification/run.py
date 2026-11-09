@@ -37,6 +37,7 @@ from common.report import write_report, relabel_by_size   # noqa: E402
 from common.profile import P                              # noqa: E402
 from common.hypotheses import load_hypotheses                         # noqa: E402
 from common import cli                                    # noqa: E402
+from common.perspectives import PERSPECTIVES, perspective_block  # noqa: E402
 
 # ----------------------------------------------------------------------
 # CONFIG (set from command-line flags in main(); run with --help)
@@ -49,6 +50,7 @@ MERGE_CHUNK_SIZE, TARGET_MIN_LABELS, TARGET_MAX_LABELS = 200, 15, 40
 CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS = 10, 0
 NOISE_NAME = "Sonstiges"
 DOMAIN = P["system"]
+PERSPECTIVE_TEXT = ""  # paragraph from --perspective / --perspective-text
 
 
 def parse_args(argv=None):
@@ -71,7 +73,20 @@ def parse_args(argv=None):
                  "context), 1 = as in the paper")
     cli.add_flag(g, "--classify-max-chars", "CLASSIFY_MAX_CHARS", 0, int,
                  "optional cap per document in classification, 0 = none")
-    return cli.apply_common(p.parse_args(argv), "llm_classification")
+    g = p.add_argument_group("perspective (viewpoint of the grouping)")
+    names = ", ".join(f"{k} ({v['title']})" for k, v in PERSPECTIVES.items())
+    cli.add_flag(g, "--perspective", "PERSPECTIVE", "subject", str,
+                 f"named perspective, see common/perspectives.py: {names}",
+                 choices=list(PERSPECTIVES))
+    cli.add_flag(g, "--perspective-text", "PERSPECTIVE_TEXT", "", str,
+                 "your own perspective paragraph (German); the run is then called "
+                 "'custom' unless --perspective names it")
+    args = p.parse_args(argv)
+    explicit = any(a == "--perspective" or a.startswith("--perspective=")
+                   for a in (argv if argv is not None else sys.argv[1:]))
+    if args.perspective_text and not explicit:
+        args.perspective = "custom"
+    return cli.apply_common(args, f"llm_classification/{args.perspective}")
 
 
 def _write_json(path, obj):
@@ -89,15 +104,21 @@ def _read_json(path):
 # 1. LABEL GENERATION
 # ----------------------------------------------------------------------
 
+def _topic_definition():
+    if PERSPECTIVE_TEXT:
+        return ("Ein Thema ist eine wiederkehrende Kategorie gemäss der Sichtweise unten, "
+                "nicht ein Einzelfall.")
+    return (f"Ein Thema ist eine wiederkehrende {P['category']} (z.B. eine "
+            "Systemfunktion, ein Prozess oder eine Geräteart), nicht ein Einzelfall.")
+
+
 def _gen_prompt(texts):
     items = "\n".join(f"[{i + 1}] {t}" for i, t in enumerate(texts))
     return f"""Hier sind {len(texts)} {P['items_long']}.
 
-Finde die Themen, die in diesen {P['items']} vorkommen. Ein Thema ist eine
-wiederkehrende {P['category']} (z.B. eine Systemfunktion, ein Prozess oder
-eine Geräteart), nicht ein Einzelfall. Keine Patientennamen, Daten oder
-Ticketnummern in den Labels.
-
+Finde die Themen, die in diesen {P['items']} vorkommen. {_topic_definition()}
+Keine Patientennamen, Daten oder Ticketnummern in den Labels.
+{perspective_block(PERSPECTIVE_TEXT)}
 Regeln:
 - Labels auf Deutsch, 2 bis 6 Wörter.
 - Ein Label pro Thema; mehrere {P['items']} können dasselbe Label teilen.
@@ -155,7 +176,7 @@ def _merge_chunk_prompt(labels):
     return f"""Hier ist eine Liste von Themen-Labels für {P['items_long']} aus einem Spital.
 Fasse Labels zusammen, die dasselbe Thema meinen (Synonyme, andere Wortwahl,
 Teilaspekte desselben Problems). Behalte unterschiedliche Themen getrennt.
-
+{perspective_block(PERSPECTIVE_TEXT)}
 Gib JSON zurück: {{"labels": ["Label 1", "Label 2", ...]}}
 
 Labels:
@@ -176,7 +197,7 @@ Erstelle daraus die finale Themenliste mit {TARGET_MIN_LABELS} bis
 - Kein Sammelthema wie "Sonstiges" (das gibt es schon separat).
 - Name auf Deutsch, 2 bis 6 Wörter. Beschreibung: 1 Satz, woran man eine
   {P['item']} zu diesem Thema erkennt.
-
+{perspective_block(PERSPECTIVE_TEXT)}
 Gib JSON zurück:
 {{"labels": [{{"name": "...", "description": "..."}}, ...]}}
 
@@ -250,7 +271,7 @@ def _classify_prompt(label_list, texts):
     items = "\n".join(f"[{i + 1}] {t}" for i, t in enumerate(texts))
     example = ", ".join(f'"{i + 1}": <nr>' for i in range(min(len(texts), 3)))
     return f"""Ordne jede {P['item']} genau einem Thema zu.
-
+{perspective_block(PERSPECTIVE_TEXT)}
 Themen:
 0: {NOISE_NAME} - passt zu keinem der Themen
 {labels}
@@ -335,7 +356,7 @@ def main(argv=None):
     global OUTPUT_DIR, STAGE_DIR, RESUME, SEED, PLOT, DOMAIN
     global GEN_BATCH_SIZE, GEN_MAX_CHARS, GEN_SAMPLE_SIZE
     global MERGE_CHUNK_SIZE, TARGET_MIN_LABELS, TARGET_MAX_LABELS
-    global CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS
+    global CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS, PERSPECTIVE_TEXT
     args = parse_args(argv)
     cli.print_settings(args)
     cli.setup_llm_context(args)
@@ -346,6 +367,12 @@ def main(argv=None):
     MERGE_CHUNK_SIZE, TARGET_MIN_LABELS, TARGET_MAX_LABELS = \
         args.merge_chunk_size, args.target_min_labels, args.target_max_labels
     CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS = args.classify_batch_size, args.classify_max_chars
+    persp = PERSPECTIVES.get(args.perspective, {})
+    PERSPECTIVE_TEXT = args.perspective_text or persp.get("text", "")
+    # embedding instruction for the UMAP plot follows the perspective
+    if args.embed_instruction == "auto" and persp.get("embed") and vllm.EMBED_PREFIX:
+        vllm.EMBED_PREFIX = f"Instruct: {persp['embed']}\nQuery: " + args.embed_prefix
+    print(f"[perspective] {args.perspective}: {PERSPECTIVE_TEXT or '(none)'}")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     df = load_cleaned(args.input)
@@ -373,9 +400,12 @@ def main(argv=None):
 
     write_report(
         df, labels, info, OUTPUT_DIR,
-        method="LLM classification", vectors=vectors, noise_name=NOISE_NAME,
+        method=f"LLM classification [{args.perspective}]", vectors=vectors,
+        noise_name=NOISE_NAME,
         params={
             "format": args.format, "input": args.input,
+            "perspective": args.perspective,
+            "perspective text": PERSPECTIVE_TEXT or "(none)",
             "LLM": vllm.VLLM_LLM_MODEL, "GEN_BATCH_SIZE": GEN_BATCH_SIZE,
             "GEN_SAMPLE_SIZE": GEN_SAMPLE_SIZE or "all",
             "TARGET_LABELS": f"{TARGET_MIN_LABELS}-{TARGET_MAX_LABELS}",

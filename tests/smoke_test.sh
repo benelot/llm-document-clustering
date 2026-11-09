@@ -26,6 +26,10 @@ python "$REPO/naive/cluster_incidents.py"           --format incidents "${API[@]
 python "$REPO/llm_classification/run.py"            --format incidents "${API[@]}" "${CLASSIFY[@]}"
 python "$REPO/clusterllm_granularity/run.py"        --format incidents "${API[@]}" "${GRAN[@]}"
 
+python "$REPO/llm_classification/run.py"            --format incidents "${API[@]}" "${CLASSIFY[@]}" --perspective process
+python "$REPO/llm_classification/run.py"            --format incidents "${API[@]}" "${CLASSIFY[@]}" --perspective-text "Gruppiere nach Geräten."
+python "$REPO/compare_runs.py" --format incidents
+
 echo "=== Format 2: survey ==="
 python "$REPO/tests/make_synthetic_survey.py" survey.xlsx 120
 python "$REPO/naive/preprocess_survey.py" --input survey.xlsx

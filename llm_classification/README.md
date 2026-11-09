@@ -37,9 +37,41 @@ defaults:
 | Classify | ~350 |
 | Hypothesis name check | 1 per hypothesis cluster |
 
+## Perspectives
+
+The same incidents can be grouped correctly along different axes. A
+perspective tells the LLM the viewpoint to group by. It adds one paragraph
+to the generation, merging and classification prompts, and it never names
+concrete clusters. The texts are in `common/perspectives.py`.
+
+| `--perspective` | Groups by |
+|---|---|
+| `subject` (default) | subject matter (behaviour before perspectives existed) |
+| `process` | where in the system or workflow the problem occurs |
+| `failure-type` | what kind of problem it is, no matter where |
+| `root-cause` | the likely cause |
+| `action` | which measure would fix it, and who is responsible |
+| `med-process-stage` | the step in the medication process (NCC MERP) |
+| `patient-safety` | the type of medication error it causes or enables (WHO ICPS) |
+| `contributing-factors` | the system weakness behind it (London Protocol) |
+
+```bash
+python <repo>/llm_classification/run.py --format incidents --perspective process
+```
+
+Use `--perspective-text "<German paragraph>"` to try your own perspective.
+The run is then called `custom`, unless you also give `--perspective`.
+
+- Each perspective writes to its own folder:
+  `cluster_output/<format>/llm_classification/<perspective>/`. Runs do not
+  overwrite each other, and each one resumes on its own.
+- The embedding instruction for the UMAP plot follows the perspective.
+
+To compare all runs, see `compare_runs.py` in the root `README.md`.
+
 ## Resume and manual edits
 
-Each stage saves its result in `cluster_output/<format>/llm_classification/stages/`:
+Each stage saves its result in `cluster_output/<format>/llm_classification/<perspective>/stages/`:
 
 | File | Content |
 |---|---|

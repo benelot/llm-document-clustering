@@ -13,6 +13,7 @@ embeddings and chat. A CIRS format will follow.
 | `common/` | shared flags, vLLM client, embedding cache, report and hypothesis evaluation |
 | `hypotheses/` | hypothesis clusters: hand-made groups of document IDs, each with a name |
 | `docs/approaches.md` | comparison of the approaches |
+| `compare_runs.py` | compares all runs (approaches, perspectives) in one table and chart |
 | `tests/` | mock vLLM server + synthetic data for a smoke test |
 
 ## Quick start
@@ -131,6 +132,25 @@ classification.
 
 The naive approach also writes its original files:
 `cluster_summaries.csv` / `.json` and `cluster_assignments.csv`.
+
+## Comparing runs
+
+```bash
+python compare_runs.py --format incidents
+```
+
+The script finds every finished run under `cluster_output/<format>/`: all
+approaches and all perspectives. It writes `compare_runs.csv` and
+`compare_runs.png`, a bar chart of precision, recall, F1 and ARI per run.
+
+| Column | Meaning |
+|---|---|
+| `clusters`, `noise_pct` | number of clusters, share of noise |
+| `largest_cluster_pct` | share of the largest cluster; a high value points to a catch-all cluster |
+| `new_topics` | clusters without any hypothesis ID |
+| `precision`, `recall`, `f1`, `ari` | agreement with the hypothesis clusters |
+| `hyp_found`, `hyp_split`, `hyp_not_found` | verdicts per hypothesis cluster |
+| `name_passt`, `name_teilweise`, `name_passt_nicht` | LLM name check |
 
 ## Hypothesis clusters
 

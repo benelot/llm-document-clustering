@@ -417,5 +417,9 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
         lines += ["", "Parameters:"] + [f"  {k} = {v}" for k, v in params.items()]
     text = "\n".join(lines)
     (out_dir / "summary.txt").write_text(text + "\n", encoding="utf-8")
+    with open(out_dir / "run_info.json", "w", encoding="utf-8") as f:
+        json.dump({"method": method, "documents": len(df), "noise": n_noise,
+                   "clusters": len(names), "params": {k: str(v) for k, v in (params or {}).items()}},
+                  f, indent=2, ensure_ascii=False)
     print("\n" + text)
     print(f"\nOutputs in: {out_dir}")
