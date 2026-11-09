@@ -253,6 +253,19 @@ approaches and all perspectives. It writes `compare_runs.csv` and
 | `hyp_found`, `hyp_split`, `hyp_not_found` | verdicts per hypothesis cluster |
 | `name_passt`, `name_teilweise`, `name_passt_nicht` | LLM name check |
 
+It also compares the runs per hypothesis cluster, because the hypotheses
+mix several axes and no single run fits all of them:
+
+| File | Content |
+|---|---|
+| `compare_hypotheses_wide.csv` | rows: hypothesis clusters, columns: runs. A cell reads like `3/4 +*`: 3 of 4 IDs together, name check `+` passt / `~` teilweise / `-` passt nicht, `*` = the cluster also holds IDs of other hypotheses. The last column names the best run(s). |
+| `compare_hypotheses.png` | the same as a heatmap; the colour is the share of IDs together |
+| `compare_hypotheses.csv` | the same in long format, one row per hypothesis and run |
+
+"Best run" ranks by name check (passt 1, teilweise 0.5), plus the share
+together, minus 0.1 for each other hypothesis in the same cluster. Ties
+list all best runs, and "all equal" means every run scores the same.
+
 ## Hypothesis clusters
 
 A person read some documents and grouped a handful of them by hand into

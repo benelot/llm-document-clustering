@@ -7,9 +7,12 @@ For each run it reads the cluster sizes and, if present, the evaluation
 against the hypothesis clusters.
 
 Output:
-  <out-dir>/compare_runs.csv   one row per run
-  <out-dir>/compare_runs.png   precision / recall / F1 / ARI per run
-  console table
+  <out-dir>/compare_runs.csv              one row per run
+  <out-dir>/compare_runs.png              precision / recall / F1 / ARI per run
+  <out-dir>/compare_hypotheses.csv        one row per hypothesis cluster and run
+  <out-dir>/compare_hypotheses_wide.csv   hypothesis x run table, plus the best run
+  <out-dir>/compare_hypotheses.png        hypothesis x run heatmap
+  console tables
 
 Examples:
   python compare_runs.py --format incidents
@@ -64,6 +67,91 @@ def read_run(d, root):
     return row
 
 
+NAME_SCORE = {"passt": 1.0, "teilweise": 0.5, "passt nicht": 0.0}
+NAME_SYMBOL = {"passt": "+", "teilweise": "~", "passt nicht": "-"}
+
+
+def hypothesis_table(runs, root, out):
+    """Hypothesis x run: for each hypothesis cluster, how well each run matches it."""
+    rows = []
+    for d in runs:
+        f = d / "hypothesis_summary.csv"
+        if not f.exists():
+            continue
+        run = str(d.relative_to(root)) if d != root else d.name
+        h = pd.read_csv(f, dtype=str).fillna("")
+        for _, r in h.iterrows():
+            n, _, tot = r["together"].partition("/")
+            n, tot = int(n or 0), int(tot or 0)
+            share = n / tot if tot else None
+            nm = r.get("name_match", "")
+            rows.append({
+                "hypothesis_cluster": r["hypothesis_cluster"], "run": run,
+                "together": r["together"], "together_share": share,
+                "verdict": r["verdict"], "best_cluster": r["best_cluster_name"],
+                "name_match": nm, "shared_with": r.get("shared_with", ""),
+                # ranking: name fit first, then share together, minus a little per
+                # other hypothesis in the same cluster
+                "score": (None if share is None else round(
+                    NAME_SCORE.get(nm, 0.0) + share
+                    - 0.1 * len([x for x in r.get("shared_with", "").split(", ") if x]), 3)),
+            })
+    if not rows:
+        print("No hypothesis evaluation found in the runs.")
+        return
+    long = pd.DataFrame(rows)
+    long.to_csv(out / "compare_hypotheses.csv", index=False, encoding="utf-8")
+
+    # wide view: cell = "3/4 +" (together, name check symbol)
+    long["cell"] = (long["together"] + " " + long["name_match"].map(NAME_SYMBOL).fillna("")
+                    + long["shared_with"].map(lambda x: "*" if x else ""))
+    order = list(dict.fromkeys(long["hypothesis_cluster"]))
+    run_order = list(dict.fromkeys(long["run"]))
+    wide = long.pivot(index="hypothesis_cluster", columns="run", values="cell").reindex(order)[run_order]
+    def best_runs(h):
+        g = long[(long["hypothesis_cluster"] == h) & long["score"].notna()]
+        if g.empty:
+            return ""
+        top = g[g["score"] == g["score"].max()]
+        if len(top) == len(g) and len(g) > 1:
+            return "all equal"
+        return "; ".join(f"{r.run} ({r.best_cluster})" for r in top.itertuples())
+    wide["best run"] = [best_runs(h) for h in wide.index]
+    wide.to_csv(out / "compare_hypotheses_wide.csv", encoding="utf-8")
+    with pd.option_context("display.width", 250, "display.max_columns", 30,
+                           "display.max_colwidth", 60):
+        print("\nHypothesis x run (together, name check: + passt, ~ teilweise, - passt nicht; "
+              "* = cluster shared with other hypotheses)")
+        print(wide.to_string())
+    print(f"\nSaved: {out / 'compare_hypotheses.csv'}, {out / 'compare_hypotheses_wide.csv'}")
+
+    # heatmap: colour = share together, text = together + name symbol
+    share = long.pivot(index="hypothesis_cluster", columns="run",
+                       values="together_share").reindex(order)[run_order].astype(float)
+    cells = long.pivot(index="hypothesis_cluster", columns="run", values="cell").reindex(order)[run_order]
+    fig, ax = plt.subplots(figsize=(1.6 * len(run_order) + 4, 0.55 * len(order) + 2.5))
+    im = ax.imshow(share.values, cmap="Greens", vmin=0, vmax=1, aspect="auto")
+    for i in range(len(order)):
+        for j in range(len(run_order)):
+            t = cells.iat[i, j]
+            v = share.iat[i, j]
+            ax.text(j, i, "" if pd.isna(t) else t, ha="center", va="center", fontsize=8,
+                    color="white" if (not pd.isna(v) and v > 0.6) else "black")
+    ax.set_xticks(range(len(run_order)))
+    ax.set_xticklabels(run_order, rotation=35, ha="right", fontsize=8)
+    ax.set_yticks(range(len(order)))
+    ax.set_yticklabels(order, fontsize=8)
+    ax.set_title("Hypothesis clusters x runs\ncolour: share of hypothesis IDs together in one "
+                 "cluster; text: together, name check (+ passt, ~ teilweise, - passt nicht), "
+                 "* = cluster shared with other hypotheses",
+                 fontsize=9)
+    fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02, label="share together")
+    plt.tight_layout()
+    plt.savefig(out / "compare_hypotheses.png", dpi=150)
+    plt.close(fig)
+    print(f"Saved: {out / 'compare_hypotheses.png'}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -86,6 +174,8 @@ def main():
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print(df.to_string(index=False))
     print(f"\nSaved: {out / 'compare_runs.csv'}")
+
+    hypothesis_table(runs, root, out)
 
     metrics = [m for m in ("precision", "recall", "f1", "ari") if m in df and df[m].notna().any()]
     if metrics:
