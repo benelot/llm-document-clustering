@@ -16,6 +16,77 @@ embeddings and chat. A CIRS format will follow.
 | `compare_runs.py` | compares all runs (approaches, perspectives) in one table and chart |
 | `tests/` | mock vLLM server + synthetic data for a smoke test |
 
+## Where the approaches come from
+
+### Naive (`naive/`)
+
+- **Origin:** the first in-house version of this project. It follows the
+  common pattern "embed, reduce, cluster, then let an LLM name the
+  clusters". BERTopic (Grootendorst, 2022, arXiv 2203.05794) made this
+  pattern popular.
+- **Essence:**
+  1. An embedding model turns every document into a vector.
+  2. HDBSCAN finds dense groups of vectors. Documents outside all groups
+     become noise.
+  3. An LLM reads a few documents per group and names the group.
+- The clusters come from vector distances only. The LLM does not
+  influence them.
+
+### LLM classification (`llm_classification/`)
+
+- **Origin:** Chen Huang and Guoxiu He, "Text Clustering as Classification
+  with LLMs", arXiv 2410.00927 (2024). Code:
+  https://github.com/ECNU-Text-Computing/Text-Clustering-via-LLM
+- **Essence:** clustering becomes a classification task, with no
+  embeddings and no clustering algorithm.
+  1. The LLM reads the documents in small batches and proposes topic labels.
+  2. The LLM merges similar labels into one final list.
+  3. The LLM assigns every document to one label of that list.
+- **Changes in this repo:**
+  - No seed labels: the paper can start from known labels, this repo lets
+    the LLM find all topics.
+  - Several documents per classification call instead of one.
+  - Batches fitted to the context length of the model.
+  - A "Sonstiges" class for documents that fit no topic.
+  - Perspectives that set the viewpoint of the grouping.
+
+### ClusterLLM granularity (`clusterllm_granularity/`)
+
+- **Origin:** Yuwei Zhang, Zihan Wang and Jingbo Shang, "ClusterLLM: Large
+  Language Models as a Guide for Text Clustering", EMNLP 2023, arXiv
+  2305.14871. Code: https://github.com/zhang-yu-wei/ClusterLLM
+- **Essence:** the paper has two parts. Both ask the LLM small questions
+  instead of letting it label everything:
+  - **Perspective:** questions of the form "is B or C closer to A?"
+    fine-tune the embedding model, so that its distances follow the
+    user's notion of a topic. This part is not implemented here, because
+    it needs a GPU and a local embedding model.
+  - **Granularity** (implemented): a hierarchical clustering tree is
+    built from the embeddings. For merges in the tree, the LLM answers
+    "do these two documents belong to the same group?". The number of
+    clusters k is chosen so that the cut of the tree agrees best with
+    these answers.
+- **Changes in this repo:**
+  - The tree is a Ward tree on UMAP-reduced embeddings.
+  - The questions use the most central documents of the merged clusters.
+  - The questions are asked without example answers.
+  - The k choice is a simple agreement count.
+  - Perspectives shape both the question and the embeddings.
+
+### Shared building blocks
+
+- **UMAP** (McInnes, Healy and Melville, 2018, arXiv 1802.03426): reduces
+  the embeddings to fewer dimensions, for clustering and for the 2D plots.
+- **HDBSCAN** (Campello, Moulavi and Sander, 2013; implementation by
+  McInnes et al.): density-based clustering with noise.
+- The perspectives `med-process-stage`, `patient-safety` and
+  `contributing-factors` use established frameworks from patient safety:
+  the NCC MERP medication use process, the WHO International
+  Classification for Patient Safety, and the London Protocol (Vincent).
+
+`docs/approaches.md` also compares two approaches that are not
+implemented here (llm_text_clustering, Vectoria).
+
 ## Quick start
 
 ```bash
