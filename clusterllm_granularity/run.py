@@ -22,11 +22,11 @@ The LLM decides how fine the clusters are, instead of HDBSCAN parameters:
 Triplet fine-tuning of the embedder (ClusterLLM "perspective" part) is not
 included.
 
-Run from the folder that holds cleaned_incidents.json:
-  python <repo>/clusterllm_granularity/run.py
+Examples (run from the folder that holds the cleaned input):
+  python <repo>/clusterllm_granularity/run.py --format incidents
+  python <repo>/clusterllm_granularity/run.py --format cirs --k-min 5 --k-max 60
 """
 
-import os
 import sys
 import random
 from pathlib import Path
@@ -41,32 +41,46 @@ from common.data import load_cleaned, truncate                   # noqa: E402
 from common.embeddings import embed_texts, reduce_dimensions     # noqa: E402
 from common.report import write_report, relabel_by_size          # noqa: E402
 from common.profile import P                                     # noqa: E402
+from common.gold import load_gold                                # noqa: E402
+from common import cli                                           # noqa: E402
 
 # ----------------------------------------------------------------------
-# CONFIG
+# CONFIG (set from command-line flags in main(); run with --help)
 # ----------------------------------------------------------------------
 
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "cluster_output/clusterllm_granularity"))
-STAGE_DIR = OUTPUT_DIR / "stages"
-RESUME = os.getenv("RESUME", "1") == "1"
-SEED = int(os.getenv("SEED", "42"))
-
-DIM_REDUCTION = os.getenv("DIM_REDUCTION", "umap")
-DIMRED_N_COMPONENTS = int(os.getenv("DIMRED_N_COMPONENTS", "10"))
-DIMRED_UMAP_N_NEIGHBORS = int(os.getenv("DIMRED_UMAP_N_NEIGHBORS", "15"))
-
-K_MIN = int(os.getenv("K_MIN", "10"))
-K_MAX = int(os.getenv("K_MAX", "100"))
-PAIRS_PER_MERGE = int(os.getenv("PAIRS_PER_MERGE", "5"))
-PAIR_MAX_CHARS = int(os.getenv("PAIR_MAX_CHARS", "1000"))
-FORCE_K = int(os.getenv("FORCE_K", "0"))  # >0: skip the LLM pair stage
-
-NAME_SAMPLES = int(os.getenv("NAME_SAMPLES", "8"))
-NAME_MAX_CHARS = int(os.getenv("NAME_MAX_CHARS", "1000"))
-
-GRANULARITY_QUESTION = os.getenv("GRANULARITY_QUESTION", P["granularity_question"])
-
+OUTPUT_DIR = STAGE_DIR = None
+RESUME, SEED, PLOT = True, 42, True
+DIM_REDUCTION, DIMRED_N_COMPONENTS, DIMRED_UMAP_N_NEIGHBORS = "umap", 10, 15
+K_MIN, K_MAX, PAIRS_PER_MERGE, PAIR_MAX_CHARS, FORCE_K = 10, 100, 5, 1000, 0
+NAME_SAMPLES, NAME_MAX_CHARS = 8, 1000
+GRANULARITY_QUESTION = P["granularity_question"]
 DOMAIN = P["system"]
+
+
+def parse_args(argv=None):
+    p = cli.make_parser(__doc__)
+    cli.add_common_args(p)
+    g = p.add_argument_group("dimension reduction before the tree")
+    cli.add_flag(g, "--dim-reduction", "DIM_REDUCTION", "umap", str, "none, pca or umap",
+                 choices=["none", "pca", "umap"])
+    cli.add_flag(g, "--dimred-n-components", "DIMRED_N_COMPONENTS", 10, int, "target dimensions")
+    cli.add_flag(g, "--dimred-umap-n-neighbors", "DIMRED_UMAP_N_NEIGHBORS", 15, int,
+                 "UMAP n_neighbors")
+    g = p.add_argument_group("granularity (LLM pair questions)")
+    cli.add_flag(g, "--k-min", "K_MIN", 10, int, "smallest candidate number of clusters")
+    cli.add_flag(g, "--k-max", "K_MAX", 100, int, "largest candidate number of clusters")
+    cli.add_flag(g, "--pairs-per-merge", "PAIRS_PER_MERGE", 5, int, "LLM questions per merge step")
+    cli.add_flag(g, "--pair-max-chars", "PAIR_MAX_CHARS", 1000, int,
+                 "characters per document in a pair question")
+    cli.add_flag(g, "--granularity-question", "GRANULARITY_QUESTION", None, str,
+                 "the 'same category?' question; defines the granularity "
+                 "(default: depends on --format, see common/profile.py)")
+    cli.add_flag(g, "--force-k", "FORCE_K", 0, int, ">0 skips the pair stage and uses this k")
+    g = p.add_argument_group("cluster naming")
+    cli.add_flag(g, "--name-samples", "NAME_SAMPLES", 8, int, "central documents shown for naming")
+    cli.add_flag(g, "--name-max-chars", "NAME_MAX_CHARS", 1000, int,
+                 "characters per document for naming")
+    return cli.apply_common(p.parse_args(argv), "clusterllm_granularity")
 
 
 # ----------------------------------------------------------------------
@@ -256,10 +270,24 @@ def name_clusters(df, labels, X):
 # MAIN
 # ----------------------------------------------------------------------
 
-def main():
+def main(argv=None):
+    global OUTPUT_DIR, STAGE_DIR, RESUME, SEED, PLOT, DOMAIN, GRANULARITY_QUESTION
+    global DIM_REDUCTION, DIMRED_N_COMPONENTS, DIMRED_UMAP_N_NEIGHBORS
+    global K_MIN, K_MAX, PAIRS_PER_MERGE, PAIR_MAX_CHARS, FORCE_K, NAME_SAMPLES, NAME_MAX_CHARS
     from scipy.cluster.hierarchy import cut_tree
+    args = parse_args(argv)
+    cli.print_settings(args)
+    OUTPUT_DIR, STAGE_DIR = args.output_dir, args.output_dir / "stages"
+    RESUME, SEED, PLOT, DOMAIN = args.resume, args.seed, args.plot, P["system"]
+    GRANULARITY_QUESTION = args.granularity_question or P["granularity_question"]
+    DIM_REDUCTION, DIMRED_N_COMPONENTS, DIMRED_UMAP_N_NEIGHBORS = \
+        args.dim_reduction, args.dimred_n_components, args.dimred_umap_n_neighbors
+    K_MIN, K_MAX, PAIRS_PER_MERGE, PAIR_MAX_CHARS, FORCE_K = \
+        args.k_min, args.k_max, args.pairs_per_merge, args.pair_max_chars, args.force_k
+    NAME_SAMPLES, NAME_MAX_CHARS = args.name_samples, args.name_max_chars
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    df = load_cleaned()
+    df = load_cleaned(args.input)
     n = len(df)
 
     vectors = embed_texts(df["consolidated_text"].tolist())
@@ -268,7 +296,7 @@ def main():
 
     if FORCE_K > 0:
         k = FORCE_K
-        print(f"[k] FORCE_K = {k}, LLM pair stage skipped")
+        print(f"[k] --force-k {k}, LLM pair stage skipped")
     else:
         steps = merge_steps(Z, nodes, n)
         pairs = stage_pairs(df, steps)
@@ -283,12 +311,14 @@ def main():
 
     write_report(
         df, labels, info, OUTPUT_DIR,
-        method="ClusterLLM granularity", vectors=vectors, noise_name="Noise",
+        method="ClusterLLM granularity", vectors=vectors if PLOT else None, noise_name="Noise",
+        gold=load_gold(args.gold_file), name_check=args.llm_name_check,
         params={
+            "format": args.format, "input": args.input,
             "LLM": vllm.VLLM_LLM_MODEL, "Embedding": vllm.VLLM_EMBED_MODEL,
             "DIM_REDUCTION": f"{DIM_REDUCTION} ({DIMRED_N_COMPONENTS} dims)",
             "K range": f"{K_MIN}-{K_MAX}", "PAIRS_PER_MERGE": PAIRS_PER_MERGE,
-            "chosen k": k, "FORCE_K": FORCE_K or "off", "SEED": SEED,
+            "chosen k": k, "force_k": FORCE_K or "off", "SEED": SEED,
         },
     )
 

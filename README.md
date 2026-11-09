@@ -1,15 +1,16 @@
 # LLM document clustering
 
-This repo clusters hospital IT incident reports by topic. It compares
-several approaches. All of them use a local vLLM server (an
-OpenAI-compatible API) for embeddings and chat.
+This repo clusters hospital reports by topic. It compares three approaches
+on two input formats: ServiceNow incidents and CIRS reports. All approaches
+use a local vLLM server (an OpenAI-compatible API) for embeddings and chat.
 
 | Folder | Approach |
 |---|---|
-| `naive/` | embed, then HDBSCAN, then the LLM names each cluster (optional UMAP before HDBSCAN) |
-| `llm_classification/` | the LLM generates topics, merges them, and classifies each incident ([details](llm_classification/README.md)) |
+| `naive/` | embed, then HDBSCAN, then the LLM names each cluster. Also holds the two preprocessors. |
+| `llm_classification/` | the LLM generates topics, merges them, and classifies each document ([details](llm_classification/README.md)) |
 | `clusterllm_granularity/` | Ward tree; LLM pair questions choose the number of clusters ([details](clusterllm_granularity/README.md)) |
-| `common/` | shared vLLM client, embedding cache, report and validation |
+| `common/` | shared flags, vLLM client, embedding cache, report and gold-standard evaluation |
+| `gold/` | gold standard: hand-made groups of document IDs per category |
 | `docs/approaches.md` | comparison of the approaches |
 | `tests/` | mock vLLM server + synthetic data for a smoke test |
 
@@ -19,97 +20,130 @@ OpenAI-compatible API) for embeddings and chat.
 pip install -r requirements.txt
 ```
 
-Preprocess the Excel export once. This writes `cleaned_incidents.json`:
+The API key comes only from the environment, so it does not end up in the
+shell history:
 
 ```bash
-python naive/preprocess_incidents.py
+export VLLM_API_KEY="your-secret"
 ```
 
-Set the same environment variables as in `naive/README.md`, section Setup.
-Then run one or both approaches:
+Preprocess the export once. Pick the line for your format:
 
 ```bash
-python llm_classification/run.py
+python naive/preprocess_incidents.py --input incidents.xlsx
 ```
 
 ```bash
-python clusterllm_granularity/run.py
+python naive/preprocess_cirs.py --input cirs.xlsx
 ```
 
-Both approaches run their LLM calls concurrently. Set the number of parallel
-requests with `LLM_CONCURRENCY` (default 8).
+Then run any approach with the same flags:
+
+```bash
+python naive/cluster_incidents.py --format incidents --embed-url http://<host>:<port>/v1/embeddings --llm-url http://<host>:<port>/v1/chat/completions
+```
+
+```bash
+python llm_classification/run.py --format cirs --embed-url ... --llm-url ...
+```
+
+```bash
+python clusterllm_granularity/run.py --format incidents --embed-url ... --llm-url ...
+```
+
+Run `--help` on any script to see every flag with its default. Every flag
+also falls back to an environment variable, which `--help` shows as
+`[env: NAME]`. Environment variables from the old setup still work.
+
+## Shared flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--format` | `incidents` | `incidents` (ServiceNow) or `cirs`; also adapts the LLM prompt wording |
+| `--input` | `cleaned_<format>.json` | cleaned input from the preprocessor |
+| `--output-dir` | `cluster_output/<format>/<approach>` | output folder |
+| `--gold-file` | `gold/<format>.json` | gold standard; the evaluation is skipped if the file is missing |
+| `--embed-url`, `--embed-model` | localhost, `Qwen/Qwen3-Embedding-4B` | embedding endpoint |
+| `--llm-url`, `--llm-model` | localhost, `Qwen/Qwen3.8-27B` | chat endpoint |
+| `--llm-concurrency` | `8` | parallel requests; vLLM batches them on the server |
+| `--llm-name-check` / `--no-llm-name-check` | on | LLM judges if cluster names match the gold categories |
+| `--resume` / `--no-resume` | on | reuse saved stage results |
+| `--plot` / `--no-plot` | on | UMAP plot |
+| `--seed` | `42` | random seed |
 
 ## Input formats
 
-The pipelines read one cleaned JSON file (`CLEANED_FILE`). Two preprocessors
-write it:
-
-| Format | Preprocessor | Output | `DATA_PROFILE` |
-|---|---|---|---|
-| IT incidents (Excel export) | `naive/preprocess_incidents.py` | `cleaned_incidents.json` | `incidents` (default) |
-| CIRS / EHR survey (Excel or CSV) | `naive/preprocess_cirs.py` | `cleaned_cirs.json` | `cirs` |
-
-`DATA_PROFILE` adapts the wording of the LLM prompts to the kind of text.
-
-CIRS example:
-
-```bash
-python naive/preprocess_cirs.py cirs.xlsx cleaned_cirs.csv
-```
-
-```bash
-export CLEANED_FILE=cleaned_cirs.json DATA_PROFILE=cirs
-```
-
-```bash
-python llm_classification/run.py
-```
+| Format | Preprocessor | One document = |
+|---|---|---|
+| ServiceNow incidents (Excel) | `naive/preprocess_incidents.py` | one incident: short description + description + work notes |
+| CIRS (Excel or CSV) | `naive/preprocess_cirs.py` | one CIRS report: all free-text answers, each prefixed with its question |
 
 The CIRS preprocessor:
-- Clusters each non-empty free-text answer as one document
-  (`CIRS_UNIT=field`, the default). The ID is `<RespondentID>_<field>`,
-  for example `50000_fix1`. One respondent writes about several topics, so
-  this gives cleaner topics.
-- With `CIRS_UNIT=respondent`, it joins all answers of a person into one
-  document instead.
+- Uses the RespondentID as the document ID.
 - Drops empty answers and placeholders like `-` or `keine`.
-- Keeps all metadata columns (specialty, clinical background, rating, ...).
-  They appear in `assignments.csv`.
-- With `CIRS_INCLUDE_QUESTION=1`, it prefixes each answer with its question.
-
-The hypothesis validation runs only if the example INC IDs occur in the
-data, so it is skipped for CIRS.
+- Keeps all metadata columns (specialty, clinical background, rating and
+  more). They appear in `assignments.csv`.
+- With `--unit field`, it makes one document per answer instead. The ID
+  is then `<RespondentID>_<field>`, for example `50000_fix1`.
 
 ## Outputs
 
-Each approach writes to `cluster_output/<approach>/`:
+Each approach writes to `cluster_output/<format>/<approach>/`:
 
 | File | Content |
 |---|---|
-| `assignments.csv` | one row per incident: `cluster_id`, `cluster_name`, `is_noise`, metadata, UMAP coordinates, text preview |
-| `clusters.csv` | one row per cluster: name, size, share, top 3 example INCs, matched hypothesis categories, `new_topic` |
-| `summary.txt` | incidents clustered vs. noise, clusters by size, hypothesis validation, parameters |
+| `assignments.csv` | one row per document: `cluster_id`, `cluster_name`, `is_noise`, metadata, UMAP coordinates, text preview |
+| `clusters.csv` | one row per cluster: name, description, size, share, top 3 examples, gold categories inside, `new_topic` |
+| `summary.txt` | documents clustered vs. noise, gold-standard evaluation, clusters by size, parameters |
 | `umap_clusters.png` | 2D UMAP plot with cluster names and sizes |
-| `validation_report.csv` | per hypothesis example INC: the cluster it landed in |
-| `validation_summary.csv` | per hypothesis category: verdict, best cluster, number of hits |
+| `gold_report.csv` | per gold ID: the cluster it landed in |
+| `gold_summary.csv` | per gold category: verdict, together, best cluster, shared with, LLM name check |
+| `gold_metrics.json` | pairwise precision, recall, F1, ARI, name check counts |
 
 Cluster `-1` is noise: HDBSCAN noise, or "Sonstiges" in the LLM
 classification.
 
-## Hypothesis validation
+The naive approach also writes its original files:
+`cluster_summaries.csv` / `.json` and `cluster_assignments.csv`.
 
-The example INCs per category are in `common/hypotheses.py`. They are used
-only after clustering, never as input. For each category:
+## Gold standard
 
-| Verdict | Meaning |
+A person read documents and grouped them into categories by hand. The file
+is `gold/<format>.json`:
+
+```json
+{"Warnmeldung": ["INC1486211", "INC1486534"], "Pumpen / Perfusor": ["INC1514480"]}
+```
+
+The approaches never see this file. It is used only at the end, to measure
+how close the clustering is to the hand-made groups.
+
+**Per category** (`gold_summary.csv`):
+
+| Column | Meaning |
 |---|---|
-| `found` | at least 2 examples, and at least half of them, are in one cluster |
-| `split` | the examples are spread over several clusters |
-| `not found (all noise)` | all examples in the dataset are noise |
-| `no examples in dataset` | none of the example INCs is in the data |
+| `together` | IDs in the most common cluster / IDs in the dataset |
+| `verdict` | `found` (at least 2 IDs and at least half in one cluster), `split`, `not found (all noise)`, `no IDs in dataset` |
+| `shared_with` | other gold categories in the same cluster; empty means cleanly separated |
+| `name_match` | the LLM compares category name and cluster name: `passt`, `teilweise` or `passt nicht`, with a reason |
 
-A cluster that contains no example INC is marked `new_topic` in
-`clusters.csv`. These are topics outside your hypotheses.
+**Overall** (`gold_metrics.json`), computed on the gold IDs only:
+
+| Metric | Meaning |
+|---|---|
+| pairwise precision | of the ID pairs the clustering puts together, the share that the gold standard also puts together |
+| pairwise recall | of the ID pairs the gold standard puts together, the share that the clustering also puts together |
+| pairwise F1 | precision and recall combined |
+| ARI | agreement corrected for chance: 0 = random, 1 = identical |
+
+- Noise counts as "not together with anything".
+- An ID that is in several categories counts as together with all of them.
+
+A cluster that contains no gold ID is marked `new_topic` in `clusters.csv`.
+These are topics outside the hand-made categories.
+
+`gold/cirs.json` does not exist yet. Until it does, the evaluation is
+skipped for CIRS.
 
 ## Smoke test (no vLLM needed)
 
@@ -118,5 +152,5 @@ bash tests/smoke_test.sh
 ```
 
 The test runs all three pipelines on synthetic data in both formats (400
-incidents, 120 survey respondents) against a mock server. It checks only
-that the code runs. It does not check the quality of the clusters.
+incidents, 120 CIRS reports) against a mock server. It checks only that
+the code runs. It does not check the quality of the clusters.

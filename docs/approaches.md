@@ -34,7 +34,7 @@ Source: https://github.com/v1nybarreto/llm_text_clustering
   - It removes stopwords and lemmatizes the text. This is less useful
     with modern embedding models.
 - **Gain:** small. The dimension reduction before HDBSCAN is worth taking.
-  It is now in the naive approach as `DIM_REDUCTION=umap`.
+  It is now in the naive approach as `--dim-reduction umap`.
 
 ## 3. Text Clustering via LLM (classification)
 

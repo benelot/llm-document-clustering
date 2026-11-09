@@ -1,8 +1,9 @@
 """
 Data profile: adapts the LLM prompts to the kind of text being clustered.
 
-  DATA_PROFILE=incidents   (default) IT incident reports, preprocess_incidents.py
-  DATA_PROFILE=cirs        CIRS / EHR survey free-text answers, preprocess_cirs.py
+  --format incidents   (default) ServiceNow incident reports, preprocess_incidents.py
+  --format cirs        CIRS reports / EHR survey answers, preprocess_cirs.py
+(environment fallback: DATA_PROFILE)
 """
 
 import os
@@ -48,7 +49,18 @@ PROFILES = {
     },
 }
 
-DATA_PROFILE = os.getenv("DATA_PROFILE", "incidents").lower()
-if DATA_PROFILE not in PROFILES:
-    raise ValueError(f"Unknown DATA_PROFILE: {DATA_PROFILE}. Use one of {list(PROFILES)}.")
-P = PROFILES[DATA_PROFILE]
+P = {}  # the active profile; updated in place, so "from common.profile import P" stays valid
+
+
+def set_profile(name):
+    global DATA_PROFILE
+    name = (name or "incidents").lower()
+    if name not in PROFILES:
+        raise ValueError(f"Unknown format/profile: {name}. Use one of {list(PROFILES)}.")
+    DATA_PROFILE = name
+    P.clear()
+    P.update(PROFILES[name])
+
+
+DATA_PROFILE = None
+set_profile(os.getenv("DATA_PROFILE", "incidents"))

@@ -5,13 +5,17 @@ Cluster hospital incident reports using:
 - HDBSCAN / DBSCAN clustering
 - Qwen LLM summaries via vLLM
 
-Expected input:
-- cleaned_incidents.json
+Input: cleaned_<format>.json from preprocess_incidents.py or preprocess_cirs.py
 
-Outputs:
-- cluster_output/cluster_summaries.csv
-- cluster_output/cluster_summaries.json
-- cluster_output/cluster_assignments.csv
+Outputs (default folder cluster_output/<format>/naive):
+- cluster_summaries.csv / .json   LLM summary per cluster
+- cluster_assignments.csv         every document with its cluster_id
+- plus the shared report of common/report.py: assignments.csv, clusters.csv,
+  summary.txt, umap_clusters.png, gold_*.csv / gold_metrics.json
+
+Examples:
+  python naive/cluster_incidents.py --format incidents --dim-reduction umap
+  python naive/cluster_incidents.py --format cirs --hdbscan-min-cluster-size 5
 """
 
 import os
@@ -25,74 +29,114 @@ from pathlib import Path
 import hashlib
 
 # ----------------------------------------------------------------------
-# CONFIGURATION
+# CONFIGURATION (command-line flags, run with --help; environment
+# variables with the old names still work as fallback defaults)
 # ----------------------------------------------------------------------
 
-CLEANED_FILE = os.getenv("CLEANED_FILE", "cleaned_incidents.json")
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "cluster_output"))
+import sys
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+from common import cli  # noqa: E402
 
-# Embedding backend: "api" or "local"
-EMBED_BACKEND = os.getenv("EMBED_BACKEND", "api").lower()
 
-# If EMBED_BACKEND=api
-VLLM_EMBED_URL = os.getenv("VLLM_EMBED_URL", "http://localhost:8000/v1/embeddings")
-VLLM_EMBED_MODEL = os.getenv("VLLM_EMBED_MODEL", "BAAI/bge-m3")
+def _build_parser():
+    p = cli.make_parser(__doc__)
+    cli.add_common_args(p)
+    g = p.add_argument_group("naive: embeddings")
+    cli.add_flag(g, "--embed-backend", "EMBED_BACKEND", "api", str,
+                 "api (vLLM) or local (sentence-transformers)", choices=["api", "local"])
+    cli.add_flag(g, "--embed-delay", "EMBED_DELAY_SECONDS", 0.0, float,
+                 "pause between embedding calls in seconds")
+    cli.add_flag(g, "--bge-local-model", "BGE_LOCAL_MODEL", "BAAI/bge-m3", str,
+                 "model for --embed-backend local")
+    cli.add_flag(g, "--bge-local-batch-size", "BGE_LOCAL_BATCH_SIZE", 32, int, "local batch size")
+    cli.add_flag(g, "--bge-max-seq-len", "BGE_MAX_SEQ_LEN", 1024, int, "local max sequence length")
+    g = p.add_argument_group("naive: clustering")
+    cli.add_flag(g, "--cluster-algorithm", "CLUSTER_ALGORITHM", "hdbscan", str,
+                 "hdbscan or dbscan", choices=["hdbscan", "dbscan"])
+    cli.add_flag(g, "--hdbscan-min-cluster-size", "HDBSCAN_MIN_CLUSTER_SIZE", 10, int,
+                 "smallest cluster")
+    cli.add_flag(g, "--hdbscan-min-samples", "HDBSCAN_MIN_SAMPLES", 3, int,
+                 "higher = more conservative, more noise")
+    cli.add_flag(g, "--hdbscan-selection-method", "HDBSCAN_SELECTION_METHOD", "leaf", str,
+                 "leaf (many fine clusters) or eom (fewer, larger)", choices=["leaf", "eom"])
+    cli.add_flag(g, "--dbscan-eps-percentile", "DBSCAN_EPS_PERCENTILE", 75.0, float,
+                 "DBSCAN fallback eps percentile")
+    cli.add_flag(g, "--dim-reduction", "DIM_REDUCTION", "none", str,
+                 "reduce dims before clustering: none, pca or umap (umap recommended)",
+                 choices=["none", "pca", "umap"])
+    cli.add_flag(g, "--dimred-n-components", "DIMRED_N_COMPONENTS", 10, int, "target dimensions")
+    cli.add_flag(g, "--dimred-umap-n-neighbors", "DIMRED_UMAP_N_NEIGHBORS", 15, int,
+                 "UMAP n_neighbors")
+    cli.add_flag(g, "--dimred-umap-min-dist", "DIMRED_UMAP_MIN_DIST", 0.0, float,
+                 "UMAP min_dist (keep 0.0 for clustering)")
+    g = p.add_argument_group("naive: LLM cluster summaries")
+    cli.add_flag(g, "--min-label-cluster-size", "MIN_LABEL_CLUSTER_SIZE", 5, int,
+                 "smaller clusters get no LLM summary")
+    cli.add_flag(g, "--max-incidents-per-cluster", "MAX_INCIDENTS_PER_CLUSTER", 8, int,
+                 "documents shown to the LLM per cluster")
+    cli.add_flag(g, "--max-chars-per-incident", "MAX_CHARS_PER_INCIDENT", 1500, int,
+                 "characters per document shown to the LLM")
+    return p
 
-# If EMBED_BACKEND=local
-BGE_LOCAL_MODEL = os.getenv("BGE_LOCAL_MODEL", "BAAI/bge-m3")
-BGE_LOCAL_BATCH_SIZE = int(os.getenv("BGE_LOCAL_BATCH_SIZE", "32"))
-BGE_MAX_SEQ_LEN = int(os.getenv("BGE_MAX_SEQ_LEN", "1024"))
 
-# Optional prefix for embeddings, e.g. "Represent this hospital incident report for clustering: "
-EMBED_PREFIX = os.getenv("EMBED_PREFIX", "")
+ARGS = _build_parser().parse_args(None if __name__ == "__main__" else [])
+ARGS = cli.apply_common(ARGS, "naive")
 
-# Qwen via vLLM
-VLLM_LLM_URL = os.getenv("VLLM_LLM_URL", "http://localhost:8001/v1/chat/completions")
-VLLM_LLM_MODEL = os.getenv("VLLM_LLM_MODEL", "qwen:3.8:27b")
-VLLM_API_KEY = os.getenv("VLLM_API_KEY", "EMPTY")
+CLEANED_FILE = ARGS.input
+OUTPUT_DIR = ARGS.output_dir
+PLOT = ARGS.plot
 
-# API settings
-EMBED_API_BATCH_SIZE = int(os.getenv("EMBED_API_BATCH_SIZE", "16"))
-EMBED_DELAY_SECONDS = float(os.getenv("EMBED_DELAY_SECONDS", "0.0"))
-TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "300"))
+EMBED_BACKEND = ARGS.embed_backend
+VLLM_EMBED_URL = ARGS.embed_url
+VLLM_EMBED_MODEL = ARGS.embed_model
+BGE_LOCAL_MODEL = ARGS.bge_local_model
+BGE_LOCAL_BATCH_SIZE = ARGS.bge_local_batch_size
+BGE_MAX_SEQ_LEN = ARGS.bge_max_seq_len
+EMBED_PREFIX = ARGS.embed_prefix
 
-# Clustering
-CLUSTER_ALGORITHM = os.getenv("CLUSTER_ALGORITHM", "hdbscan")  # "hdbscan" or "dbscan"
-HDBSCAN_MIN_CLUSTER_SIZE = int(os.getenv("HDBSCAN_MIN_CLUSTER_SIZE", "10"))
-HDBSCAN_MIN_SAMPLES = int(os.getenv("HDBSCAN_MIN_SAMPLES", "3"))
-DBSCAN_EPS_PERCENTILE = float(os.getenv("DBSCAN_EPS_PERCENTILE", "75"))
+VLLM_LLM_URL = ARGS.llm_url
+VLLM_LLM_MODEL = ARGS.llm_model
+VLLM_API_KEY = os.getenv("VLLM_API_KEY", "EMPTY")  # environment only, never a flag
 
-# Optional dimension reduction before clustering: "none", "pca" or "umap".
-# HDBSCAN density estimates degrade in high dimensions (1024-2560 dims);
-# UMAP to ~5-15 dims usually gives fewer noise points and stabler clusters.
-DIM_REDUCTION = os.getenv("DIM_REDUCTION", "none").lower()
-DIMRED_N_COMPONENTS = int(os.getenv("DIMRED_N_COMPONENTS", "10"))
-DIMRED_UMAP_N_NEIGHBORS = int(os.getenv("DIMRED_UMAP_N_NEIGHBORS", "15"))
-DIMRED_UMAP_MIN_DIST = float(os.getenv("DIMRED_UMAP_MIN_DIST", "0.0"))
-DIMRED_RANDOM_STATE = int(os.getenv("DIMRED_RANDOM_STATE", "42"))
+EMBED_API_BATCH_SIZE = ARGS.embed_batch_size
+EMBED_DELAY_SECONDS = ARGS.embed_delay
+TIMEOUT_SECONDS = ARGS.timeout
 
-# Kind of input text: "incidents" (preprocess_incidents.py, default) or
-# "cirs" (preprocess_cirs.py). Only changes the wording of the LLM prompt.
-DATA_PROFILE = os.getenv("DATA_PROFILE", "incidents").lower()
+CLUSTER_ALGORITHM = ARGS.cluster_algorithm
+HDBSCAN_MIN_CLUSTER_SIZE = ARGS.hdbscan_min_cluster_size
+HDBSCAN_MIN_SAMPLES = ARGS.hdbscan_min_samples
+HDBSCAN_SELECTION_METHOD = ARGS.hdbscan_selection_method
+DBSCAN_EPS_PERCENTILE = ARGS.dbscan_eps_percentile
+
+# Optional dimension reduction before clustering. HDBSCAN density estimates
+# degrade in high dimensions (1024-2560 dims); UMAP to ~5-15 dims usually
+# gives fewer noise points and stabler clusters.
+DIM_REDUCTION = ARGS.dim_reduction
+DIMRED_N_COMPONENTS = ARGS.dimred_n_components
+DIMRED_UMAP_N_NEIGHBORS = ARGS.dimred_umap_n_neighbors
+DIMRED_UMAP_MIN_DIST = ARGS.dimred_umap_min_dist
+DIMRED_RANDOM_STATE = ARGS.seed
+
+# Kind of input text (--format). Only changes the wording of the LLM prompt.
+DATA_PROFILE = ARGS.format
 _PROFILE_TEXT = {
     "incidents": ("You analyze incident reports and identify systemic risks that "
                   "require hospital-wide action.",
                   "hospital incident reports"),
-    "cirs": ("You analyze free-text answers of hospital staff about the clinical "
+    "cirs": ("You analyze free-text reports of hospital staff about the clinical "
              "information system (EHR), from CIRS reports and surveys, and identify "
              "systemic problems and improvements that require hospital-wide action.",
-             "free-text answers (CIRS / EHR survey)"),
+             "free-text reports (CIRS / EHR survey)"),
 }
-if DATA_PROFILE not in _PROFILE_TEXT:
-    raise ValueError(f"Unknown DATA_PROFILE: {DATA_PROFILE}. Use incidents or cirs.")
 
 # LLM labeling
-MIN_LABEL_CLUSTER_SIZE = int(os.getenv("MIN_LABEL_CLUSTER_SIZE", "5"))
-MAX_INCIDENTS_PER_CLUSTER = int(os.getenv("MAX_INCIDENTS_PER_CLUSTER", "8"))
-MAX_CHARS_PER_INCIDENT = int(os.getenv("MAX_CHARS_PER_INCIDENT", "1500"))
-LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4000"))
-JSON_MODE = os.getenv("JSON_MODE", "0").lower() == "1"
+MIN_LABEL_CLUSTER_SIZE = ARGS.min_label_cluster_size
+MAX_INCIDENTS_PER_CLUSTER = ARGS.max_incidents_per_cluster
+MAX_CHARS_PER_INCIDENT = ARGS.max_chars_per_incident
+LLM_TEMPERATURE = ARGS.llm_temperature
+LLM_MAX_TOKENS = ARGS.llm_max_tokens
+JSON_MODE = ARGS.json_mode
 
 
 # ----------------------------------------------------------------------
@@ -395,8 +439,7 @@ def hdbscan_clustering(X, n):
         min_cluster_size=min_cluster,
         min_samples=min_samples,
         metric="euclidean",
-#        cluster_selection_method="eom"
-        cluster_selection_method="leaf"
+        cluster_selection_method=HDBSCAN_SELECTION_METHOD
     )
 
     labels = model.fit_predict(X)
@@ -616,6 +659,7 @@ def load_cleaned(path):
 # ----------------------------------------------------------------------
 
 def main():
+    cli.print_settings(ARGS)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Loading cleaned incidents...")
@@ -719,6 +763,33 @@ def main():
     if not summary_flat.empty:
         print("\nTop clusters:")
         print(summary_flat.head(10).to_string(index=False))
+
+    # Shared report: UMAP plot, cluster table, gold-standard evaluation
+    from common.report import write_report
+    from common.gold import load_gold
+    info = {
+        int(s["cluster_id"]): {
+            "cluster_name": s.get("cluster_name", ""),
+            "description": s.get("root_cause", ""),
+            "recommended_measure": s.get("recommended_measure", ""),
+            "urgency": s.get("urgency", ""),
+        }
+        for s in summaries
+    }
+    df["incident_id"] = df["incident_id"].astype(str)
+    write_report(
+        df.drop(columns=["cluster_id"]), labels, info, OUTPUT_DIR,
+        method="Naive (HDBSCAN)", vectors=vectors if PLOT else None, noise_name="Noise",
+        gold=load_gold(ARGS.gold_file), name_check=ARGS.llm_name_check,
+        params={
+            "format": ARGS.format, "input": CLEANED_FILE,
+            "Embedding": VLLM_EMBED_MODEL if EMBED_BACKEND == "api" else BGE_LOCAL_MODEL,
+            "LLM": VLLM_LLM_MODEL, "algorithm": CLUSTER_ALGORITHM,
+            "HDBSCAN min_cluster_size / min_samples / method":
+                f"{HDBSCAN_MIN_CLUSTER_SIZE} / {HDBSCAN_MIN_SAMPLES} / {HDBSCAN_SELECTION_METHOD}",
+            "DIM_REDUCTION": f"{DIM_REDUCTION} ({DIMRED_N_COMPONENTS} dims)",
+        },
+    )
 
 
 if __name__ == "__main__":

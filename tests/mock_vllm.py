@@ -58,6 +58,11 @@ def items(prompt):
 
 
 def answer(user):
+    if "Kategorie der Fachperson:" in user:  # gold-standard name check
+        cat = re.search(r"Kategorie der Fachperson: (.*)", user).group(1)
+        name = re.search(r"Cluster-Name: (.*)", user).group(1)
+        same = topic(cat) is not None and topic(cat) == topic(name)
+        return {"match": "passt" if same else "passt nicht", "reason": "mock"}
     if "Finde die Themen" in user:
         labs = {rnd.choice(VARIANTS.get(topic(t), [topic(t)])) for _, t in items(user) if topic(t)}
         return {"labels": sorted(labs)}

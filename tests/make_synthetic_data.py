@@ -9,7 +9,8 @@ import json
 import random
 
 sys.path.insert(0, __file__.rsplit("/", 2)[0])
-from common.hypotheses import EXAMPLES  # noqa: E402
+from common.gold import load_gold  # noqa: E402
+EXAMPLES = load_gold(__file__.rsplit("/", 2)[0] + "/gold/incidents.json")
 
 # topic key -> (hypothesis category or None, text templates)
 TOPICS = {

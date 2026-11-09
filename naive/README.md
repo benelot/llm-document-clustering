@@ -66,47 +66,35 @@ vLLM servers.
 
 ## Setup
 
+All settings are command-line flags; run `python cluster_incidents.py --help`
+for the full list. The old environment variables still work as fallback.
+The API key comes only from the environment:
+
 ```bash
-# Embedding endpoint
-export EMBED_BACKEND="api"
-export VLLM_EMBED_URL="http://<embed-host>:<embed-port>/v1/embeddings"
-export VLLM_EMBED_MODEL="Qwen/Qwen3-Embedding-4B"
-
-# Chat endpoint
-export VLLM_LLM_URL="http://<llm-host>:<llm-port>/v1/chat/completions"
-export VLLM_LLM_MODEL="Qwen/Qwen3.8-27B"
-
-# Auth
 export VLLM_API_KEY="your-secret"
-
-# Paths
-export CLEANED_FILE="cleaned_incidents.json"
-export OUTPUT_DIR="cluster_output"
-```
-
-## Other input format: CIRS / EHR survey
-
-`preprocess_cirs.py` converts a CIRS / EHR survey export (Excel or CSV) into
-the same format. Then set `CLEANED_FILE` and `DATA_PROFILE=cirs`. See the
-root `README.md`, section Input formats.
-
-```bash
-python preprocess_cirs.py cirs.xlsx cleaned_cirs.csv
-```
-
-```bash
-CLEANED_FILE=cleaned_cirs.json DATA_PROFILE=cirs python cluster_incidents.py
 ```
 
 ## Running the pipeline
 
-```bash
-# 1. Excel → cleaned JSON  (first run or after new export)
-python preprocess_incidents.py
+Excel to cleaned JSON (first run or after a new export). Pick the line for
+your format:
 
-# 2. Embed + cluster + summarize
-python cluster_incidents.py
+```bash
+python preprocess_incidents.py --input incidents.xlsx
 ```
+
+```bash
+python preprocess_cirs.py --input cirs.xlsx
+```
+
+Embed, cluster, summarize and report:
+
+```bash
+python cluster_incidents.py --format incidents --embed-url http://<embed-host>:<embed-port>/v1/embeddings --llm-url http://<llm-host>:<llm-port>/v1/chat/completions
+```
+
+Use `--format cirs` for CIRS reports. It reads `cleaned_cirs.json` and adapts
+the LLM prompt.
 
 A full run on ~3,500 incidents:
 
@@ -116,55 +104,57 @@ A full run on ~3,500 incidents:
 | Clustering | < 1 s |
 | LLM summarization (one call per cluster) | 2–10 min |
 
-## Analysis scripts
+## Output files
 
-Run after the pipeline. They read `cluster_output/cluster_assignments_2.csv`
-(and `cluster_summaries_2.csv`), so rename or copy the pipeline output first.
+Default folder: `cluster_output/<format>/naive/`.
+
+```
+cluster_summaries.csv       # one row per cluster, sorted by size × urgency
+cluster_summaries.json      # same + raw LLM response + incident IDs
+cluster_assignments.csv     # every document with a cluster_id column
+embeddings.npy              # raw vector matrix (~36 MB), cached
+embeddings.meta.json        # hash + shape, for cache validation
++ shared report: assignments.csv, clusters.csv, summary.txt,
+  umap_clusters.png, gold_report.csv, gold_summary.csv, gold_metrics.json
+```
+
+The shared report is described in the root `README.md`, sections Outputs
+and Gold standard.
+
+- **`cluster_summaries.csv`**: for safety officers and management.
+- **`cluster_summaries.json`**: for IT, audit trail, drill-down.
+- **`cluster_assignments.csv`**: to filter the original data by cluster.
+
+## Analysis scripts (older, kept as they are)
+
+The shared report now covers these. They still read
+`cluster_output/cluster_assignments_2.csv` (and `cluster_summaries_2.csv`),
+so copy the pipeline output there first.
 
 | Script | Purpose |
 |---|---|
 | `cluster_examples.py` | Top 3 INC IDs per cluster (highest priority first) → `cluster_examples_lookup.csv` |
-| `hypothesis_matches.py` | Checks if hand-picked example INCs per hypothesis category land in the mapped clusters → `validation_report.csv` |
+| `hypothesis_matches.py` | Checks the hand-made `CLUSTER_MAP` (category → cluster IDs) against the example INCs → `validation_report.csv` |
 | `plot_clusters.py` | PCA + UMAP 2D plot of the clusters → `umap_clusters.png` |
-
-```bash
-python cluster_examples.py
-python hypothesis_matches.py
-python plot_clusters.py
-```
-
-## Output files
-
-```
-cluster_output/
-├── cluster_summaries.csv       # one row per cluster, sorted by size × urgency
-├── cluster_summaries.json      # same + raw LLM response + incident IDs
-├── cluster_assignments.csv     # every incident with a cluster_id column
-├── embeddings.npy              # raw vector matrix (~36 MB), cached
-└── embeddings.meta.json        # hash + shape, for cache validation
-```
-
-- **`cluster_summaries.csv`** — for safety officers and management.
-- **`cluster_summaries.json`** — for IT, audit trail, drill-down.
-- **`cluster_assignments.csv`** — to filter the original data by cluster.
 
 ## Tuning
 
-All via environment variables. Defaults work for ~3,500 incidents.
+Defaults work for ~3,500 incidents.
 
-| Variable | Default | Increase if… | Decrease if… |
+| Flag | Default | Increase if… | Decrease if… |
 |---|---|---|---|
-| `HDBSCAN_MIN_CLUSTER_SIZE` | `10` | too many tiny clusters | clusters too broad |
-| `HDBSCAN_MIN_SAMPLES` | `3` | clusters too fine-grained | — |
-| `MIN_LABEL_CLUSTER_SIZE` | `5` | LLM labels noise clusters | too few clusters summarized |
-| `MAX_INCIDENTS_PER_CLUSTER` | `8` | — | Qwen context too long |
-| `MAX_CHARS_PER_INCIDENT` | `1500` | — | important details cut off |
-| `LLM_TEMPERATURE` | `0.1` | — | summaries inconsistent |
-| `DBSCAN_EPS_PERCENTILE` | `75` | — | fallback clusters too broad |
-| `DIM_REDUCTION` | `none` | — | — (`none`, `pca` or `umap`; reduces dims before clustering, `umap` recommended) |
-| `DIMRED_N_COMPONENTS` | `10` | clusters merge too much | too much noise |
-| `DIMRED_UMAP_N_NEIGHBORS` | `15` | clusters too fragmented | clusters too broad |
-| `DIMRED_UMAP_MIN_DIST` | `0.0` | — | — (keep `0.0` for clustering) |
+| `--hdbscan-min-cluster-size` | `10` | too many tiny clusters | clusters too broad |
+| `--hdbscan-min-samples` | `3` | clusters too fine-grained | — |
+| `--hdbscan-selection-method` | `leaf` | — | — (`eom` gives fewer, larger clusters) |
+| `--min-label-cluster-size` | `5` | LLM labels noise clusters | too few clusters summarized |
+| `--max-incidents-per-cluster` | `8` | — | Qwen context too long |
+| `--max-chars-per-incident` | `1500` | — | important details cut off |
+| `--llm-temperature` | `0.1` | — | summaries inconsistent |
+| `--dbscan-eps-percentile` | `75` | — | fallback clusters too broad |
+| `--dim-reduction` | `none` | — | — (`none`, `pca` or `umap`; reduces dims before clustering, `umap` recommended) |
+| `--dimred-n-components` | `10` | clusters merge too much | too much noise |
+| `--dimred-umap-n-neighbors` | `15` | clusters too fragmented | clusters too broad |
+| `--dimred-umap-min-dist` | `0.0` | — | — (keep `0.0` for clustering) |
 
 ## Limitations
 
@@ -184,12 +174,13 @@ naive/
 ├── README.md
 ├── requirements.txt
 ├── preprocess_incidents.py
+├── preprocess_cirs.py
 ├── cluster_incidents.py
 ├── cluster_examples.py
 ├── hypothesis_matches.py
 ├── plot_clusters.py
-├── incidents.xlsx              # input (not in git)
-├── cleaned_incidents.json      # generated (not in git)
+├── incidents.xlsx / cirs.xlsx  # input (not in git)
+├── cleaned_<format>.json       # generated (not in git)
 └── cluster_output/             # generated (not in git)
 ```
 
@@ -199,6 +190,6 @@ naive/
 |---|---|
 | `socket.gaierror: Temporary failure in name resolution` | Transient WSL2 DNS glitch. Re-run, or `sudo systemctl restart systemd-resolved` |
 | `HTTP 401 Unauthorized` from vLLM | `VLLM_API_KEY` not set or wrong |
-| `HDBSCAN produced mostly noise` | Script auto-falls back to DBSCAN. If still bad, lower `HDBSCAN_MIN_CLUSTER_SIZE` to `5` |
-| Qwen returns non-JSON | Script falls back to a "Manual review required" summary. Lower `LLM_TEMPERATURE` to `0.0` |
+| `HDBSCAN produced mostly noise` | Script auto-falls back to DBSCAN. If still bad, lower `--hdbscan-min-cluster-size` to `5` |
+| Qwen returns non-JSON | Script falls back to a "Manual review required" summary. Lower `--llm-temperature` to `0.0` |
 | Embedding response has unexpected shape | Inspect the raw response of the embedding endpoint; `extract_embeddings()` handles the common formats |

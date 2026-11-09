@@ -6,7 +6,7 @@ arXiv 2410.00927, https://github.com/ECNU-Text-Computing/Text-Clustering-via-LLM
 
 No seed labels: the LLM finds the topics itself.
 
-Stages (each stage result is saved; RESUME=1 reuses it on the next run):
+Stages (each stage result is saved; --resume reuses it on the next run):
   1. generate   LLM reads shuffled batches of incidents, proposes topic labels
                 -> stages/raw_labels.json
   2. merge      LLM merges similar labels into one final list (target range)
@@ -16,11 +16,11 @@ Stages (each stage result is saved; RESUME=1 reuses it on the next run):
                 -> stages/classifications.jsonl
   4. report     common/report.py: assignments, clusters, UMAP plot, validation
 
-Run from the folder that holds cleaned_incidents.json:
-  python <repo>/llm_classification/run.py
+Examples (run from the folder that holds the cleaned input):
+  python <repo>/llm_classification/run.py --format incidents
+  python <repo>/llm_classification/run.py --format cirs --llm-concurrency 16
 """
 
-import os
 import sys
 import json
 import random
@@ -35,36 +35,40 @@ from common.data import load_cleaned, truncate            # noqa: E402
 from common.embeddings import embed_texts                 # noqa: E402
 from common.report import write_report, relabel_by_size   # noqa: E402
 from common.profile import P                              # noqa: E402
+from common.gold import load_gold                         # noqa: E402
+from common import cli                                    # noqa: E402
 
 # ----------------------------------------------------------------------
-# CONFIG
+# CONFIG (set from command-line flags in main(); run with --help)
 # ----------------------------------------------------------------------
 
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "cluster_output/llm_classification"))
-STAGE_DIR = OUTPUT_DIR / "stages"
-RESUME = os.getenv("RESUME", "1") == "1"
-SEED = int(os.getenv("SEED", "42"))
-
-# 1. label generation
-GEN_BATCH_SIZE = int(os.getenv("GEN_BATCH_SIZE", "15"))
-GEN_MAX_CHARS = int(os.getenv("GEN_MAX_CHARS", "600"))
-GEN_SAMPLE_SIZE = int(os.getenv("GEN_SAMPLE_SIZE", "0"))  # 0 = all incidents
-
-# 2. label merging
-MERGE_CHUNK_SIZE = int(os.getenv("MERGE_CHUNK_SIZE", "200"))
-TARGET_MIN_LABELS = int(os.getenv("TARGET_MIN_LABELS", "15"))
-TARGET_MAX_LABELS = int(os.getenv("TARGET_MAX_LABELS", "40"))
-
-# 3. classification
-CLASSIFY_BATCH_SIZE = int(os.getenv("CLASSIFY_BATCH_SIZE", "10"))
-CLASSIFY_MAX_CHARS = int(os.getenv("CLASSIFY_MAX_CHARS", "1000"))
-
-# 4. report
-PLOT = os.getenv("PLOT", "1") == "1"
-
+OUTPUT_DIR = STAGE_DIR = None
+RESUME, SEED, PLOT = True, 42, True
+GEN_BATCH_SIZE, GEN_MAX_CHARS, GEN_SAMPLE_SIZE = 15, 600, 0
+MERGE_CHUNK_SIZE, TARGET_MIN_LABELS, TARGET_MAX_LABELS = 200, 15, 40
+CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS = 10, 1000
 NOISE_NAME = "Sonstiges"
-
 DOMAIN = P["system"]
+
+
+def parse_args(argv=None):
+    p = cli.make_parser(__doc__)
+    cli.add_common_args(p)
+    g = p.add_argument_group("1. label generation")
+    cli.add_flag(g, "--gen-batch-size", "GEN_BATCH_SIZE", 15, int, "documents per generation call")
+    cli.add_flag(g, "--gen-max-chars", "GEN_MAX_CHARS", 600, int, "characters per document in generation")
+    cli.add_flag(g, "--gen-sample-size", "GEN_SAMPLE_SIZE", 0, int,
+                 "documents used for generation, 0 = all")
+    g = p.add_argument_group("2. label merging")
+    cli.add_flag(g, "--merge-chunk-size", "MERGE_CHUNK_SIZE", 200, int, "labels per pre-merge call")
+    cli.add_flag(g, "--target-min-labels", "TARGET_MIN_LABELS", 15, int, "min topics in final list")
+    cli.add_flag(g, "--target-max-labels", "TARGET_MAX_LABELS", 40, int, "max topics in final list")
+    g = p.add_argument_group("3. classification")
+    cli.add_flag(g, "--classify-batch-size", "CLASSIFY_BATCH_SIZE", 10, int,
+                 "documents per classification call, 1 = as in the paper")
+    cli.add_flag(g, "--classify-max-chars", "CLASSIFY_MAX_CHARS", 1000, int,
+                 "characters per document in classification")
+    return cli.apply_common(p.parse_args(argv), "llm_classification")
 
 
 def _write_json(path, obj):
@@ -311,9 +315,23 @@ def stage_classify(df, label_list):
 # MAIN
 # ----------------------------------------------------------------------
 
-def main():
+def main(argv=None):
+    global OUTPUT_DIR, STAGE_DIR, RESUME, SEED, PLOT, DOMAIN
+    global GEN_BATCH_SIZE, GEN_MAX_CHARS, GEN_SAMPLE_SIZE
+    global MERGE_CHUNK_SIZE, TARGET_MIN_LABELS, TARGET_MAX_LABELS
+    global CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS
+    args = parse_args(argv)
+    cli.print_settings(args)
+    OUTPUT_DIR, STAGE_DIR = args.output_dir, args.output_dir / "stages"
+    RESUME, SEED, PLOT, DOMAIN = args.resume, args.seed, args.plot, P["system"]
+    GEN_BATCH_SIZE, GEN_MAX_CHARS, GEN_SAMPLE_SIZE = \
+        args.gen_batch_size, args.gen_max_chars, args.gen_sample_size
+    MERGE_CHUNK_SIZE, TARGET_MIN_LABELS, TARGET_MAX_LABELS = \
+        args.merge_chunk_size, args.target_min_labels, args.target_max_labels
+    CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS = args.classify_batch_size, args.classify_max_chars
+
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    df = load_cleaned()
+    df = load_cleaned(args.input)
 
     raw = stage_generate(df)
     label_list = stage_merge(raw)
@@ -340,6 +358,7 @@ def main():
         df, labels, info, OUTPUT_DIR,
         method="LLM classification", vectors=vectors, noise_name=NOISE_NAME,
         params={
+            "format": args.format, "input": args.input,
             "LLM": vllm.VLLM_LLM_MODEL, "GEN_BATCH_SIZE": GEN_BATCH_SIZE,
             "GEN_SAMPLE_SIZE": GEN_SAMPLE_SIZE or "all",
             "TARGET_LABELS": f"{TARGET_MIN_LABELS}-{TARGET_MAX_LABELS}",
@@ -349,6 +368,7 @@ def main():
             "incidents not classifiable (LLM error)": sum(failed),
         },
         extra_cols={"llm_failed": failed},
+        gold=load_gold(args.gold_file), name_check=args.llm_name_check,
     )
 
 

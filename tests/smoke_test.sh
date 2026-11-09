@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of all pipelines against the mock vLLM server,
-# for both input formats (incidents and CIRS survey). Synthetic data only.
+# for both input formats (incidents and CIRS). Synthetic data only.
 # Usage: bash tests/smoke_test.sh [workdir]
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -13,25 +13,34 @@ python "$REPO/tests/mock_vllm.py" $PORT & MOCK=$!
 trap 'kill $MOCK' EXIT
 sleep 1
 
-export VLLM_EMBED_URL="http://127.0.0.1:$PORT/v1/embeddings"
-export VLLM_LLM_URL="http://127.0.0.1:$PORT/v1/chat/completions"
-export EMBED_BACKEND=api LLM_RETRIES=2 RESUME=0
-export K_MIN=3 K_MAX=20 PAIRS_PER_MERGE=3 TARGET_MIN_LABELS=4 TARGET_MAX_LABELS=10
-export HDBSCAN_MIN_CLUSTER_SIZE=5
+API=(--embed-url "http://127.0.0.1:$PORT/v1/embeddings"
+     --llm-url "http://127.0.0.1:$PORT/v1/chat/completions"
+     --llm-retries 2 --no-resume)
+NAIVE=(--dim-reduction umap --hdbscan-min-cluster-size 5)
+CLASSIFY=(--target-min-labels 4 --target-max-labels 10)
+GRAN=(--k-min 3 --k-max 20 --pairs-per-merge 3)
 
 echo "=== Format 1: incidents ==="
 python "$REPO/tests/make_synthetic_data.py" cleaned_incidents.json 400
-export DATA_PROFILE=incidents CLEANED_FILE=cleaned_incidents.json
-OUTPUT_DIR=cluster_output/incidents/naive DIM_REDUCTION=umap python "$REPO/naive/cluster_incidents.py"
-OUTPUT_DIR=cluster_output/incidents/llm_classification python "$REPO/llm_classification/run.py"
-OUTPUT_DIR=cluster_output/incidents/clusterllm_granularity python "$REPO/clusterllm_granularity/run.py"
+python "$REPO/naive/cluster_incidents.py"           --format incidents "${API[@]}" "${NAIVE[@]}"
+python "$REPO/llm_classification/run.py"            --format incidents "${API[@]}" "${CLASSIFY[@]}"
+python "$REPO/clusterllm_granularity/run.py"        --format incidents "${API[@]}" "${GRAN[@]}"
 
-echo "=== Format 2: CIRS survey ==="
+echo "=== Format 2: CIRS ==="
 python "$REPO/tests/make_synthetic_cirs.py" cirs.xlsx 120
-python "$REPO/naive/preprocess_cirs.py" cirs.xlsx cleaned_cirs.csv
-export DATA_PROFILE=cirs CLEANED_FILE=cleaned_cirs.json
-OUTPUT_DIR=cluster_output/cirs/naive DIM_REDUCTION=umap python "$REPO/naive/cluster_incidents.py"
-OUTPUT_DIR=cluster_output/cirs/llm_classification python "$REPO/llm_classification/run.py"
-OUTPUT_DIR=cluster_output/cirs/clusterllm_granularity python "$REPO/clusterllm_granularity/run.py"
+python "$REPO/naive/preprocess_cirs.py" --input cirs.xlsx
+# synthetic gold standard: respondents grouped by the topic of their "Fix 1" answer
+python - <<'PY'
+import json, pandas as pd
+df = pd.read_excel("cirs.xlsx")
+gold = {}
+for kw, cat in [("Drucker", "Drucken"), ("Warnmeldung", "Warnmeldung"), ("Login", "Login")]:
+    ids = df.loc[df["Fix 1"].astype(str).str.contains(kw), "RespondentID"].astype(str).tolist()
+    gold[cat] = ids[:6]
+json.dump(gold, open("gold_cirs.json", "w"), indent=2)
+PY
+python "$REPO/naive/cluster_incidents.py"           --format cirs --gold-file gold_cirs.json "${API[@]}" "${NAIVE[@]}"
+python "$REPO/llm_classification/run.py"            --format cirs --gold-file gold_cirs.json "${API[@]}" "${CLASSIFY[@]}"
+python "$REPO/clusterllm_granularity/run.py"        --format cirs --gold-file gold_cirs.json "${API[@]}" "${GRAN[@]}"
 
 echo "Smoke test OK. Outputs in $WORK/cluster_output"

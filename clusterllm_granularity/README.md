@@ -7,11 +7,11 @@ The triplet fine-tuning part ("perspective") is not included.
 
 ## How it works
 
-1. **Embed** all incidents, with the same API and cache as the other
+1. **Embed** all documents, with the same API and cache as the other
    approaches. Then reduce the dimensions (default: UMAP to 10 dims).
 2. **Tree:** build a full agglomerative (Ward) tree.
-3. **Pairs:** for every merge step from `K_MAX` down to `K_MIN` clusters,
-   take `PAIRS_PER_MERGE` pairs. Each pair has one incident from each of
+3. **Pairs:** for every merge step from `--k-max` down to `--k-min` clusters,
+   take `--pairs-per-merge` pairs. Each pair has one document from each of
    the two merged clusters. The LLM answers: same problem category?
 4. **Choose k:** for each k, count how many answers agree with cutting the
    tree at k:
@@ -20,42 +20,40 @@ The triplet fine-tuning part ("perspective") is not included.
 
    The best k wins. See `k_scores.png`.
 5. **Cut and name:** cut the tree at k. The LLM names each cluster from its
-   8 most central incidents.
+   8 most central documents.
 
-There is no noise: every incident gets a cluster.
+There is no noise: every document gets a cluster.
 
 ## Run
 
-Use the same environment variables as `naive/`. Run from the folder that
-holds `cleaned_incidents.json`:
+Run from the folder that holds the cleaned input. See the root `README.md`
+for the shared flags (format, endpoints, gold standard):
 
 ```bash
-python <repo>/clusterllm_granularity/run.py
+python <repo>/clusterllm_granularity/run.py --format incidents --embed-url ... --llm-url ...
 ```
 
 With the defaults, it makes 90 merges x 5 pairs = 450 pair calls, plus one
-naming call per cluster.
+naming call per cluster. `--help` lists every flag.
 
 ## Parameters
 
-| Variable | Default | Meaning |
+| Flag | Default | Meaning |
 |---|---|---|
-| `LLM_CONCURRENCY` | `8` | parallel requests to vLLM |
-| `DIM_REDUCTION` | `umap` | `none`, `pca` or `umap`, before building the tree |
-| `DIMRED_N_COMPONENTS` | `10` | target dims |
-| `K_MIN` / `K_MAX` | `10` / `100` | candidate range for the number of clusters |
-| `PAIRS_PER_MERGE` | `5` | LLM questions per merge step |
-| `PAIR_MAX_CHARS` | `1000` | text per incident in a pair question |
-| `GRANULARITY_QUESTION` | see `run.py` | the "same category?" question; this defines the granularity |
-| `FORCE_K` | `0` | `>0` skips the pair stage and uses this k |
-| `NAME_SAMPLES` | `8` | central incidents shown for naming |
-| `OUTPUT_DIR` | `cluster_output/clusterllm_granularity` | |
+| `--dim-reduction` | `umap` | `none`, `pca` or `umap`, before building the tree |
+| `--dimred-n-components` | `10` | target dims |
+| `--k-min` / `--k-max` | `10` / `100` | candidate range for the number of clusters |
+| `--pairs-per-merge` | `5` | LLM questions per merge step |
+| `--pair-max-chars` | `1000` | text per document in a pair question |
+| `--granularity-question` | depends on `--format` | the "same category?" question; this defines the granularity |
+| `--force-k` | `0` | `>0` skips the pair stage and uses this k |
+| `--name-samples` | `8` | central documents shown for naming |
 
-Pair answers are saved in `stages/pairs.csv`. With `RESUME=1` (the
-default), the next run reuses them.
+The reduced vectors and pair answers are saved in `stages/`. With
+`--resume` (the default), the next run reuses them.
 
-To change the granularity, change `GRANULARITY_QUESTION`. Then run again
-with `RESUME=0`.
+To change the granularity, change `--granularity-question`, then run again
+with `--no-resume`.
 
 ## Outputs
 

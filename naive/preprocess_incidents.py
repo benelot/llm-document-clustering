@@ -102,11 +102,18 @@ def load_and_clean_excel(file_path, output_file='cleaned_incidents.csv'):
 
 # Example usage
 if __name__ == "__main__":
-    # Replace with your actual file path
-    input_file = "incidents.xlsx"  # or "incidents.xlsx"
-    
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="ServiceNow incident Excel export -> cleaned_incidents.csv/.json",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--input", default="incidents.xlsx", help="Excel export")
+    parser.add_argument("--output", default="cleaned_incidents.csv",
+                        help="output CSV; a .json with the same name is written too")
+    args = parser.parse_args()
+    input_file = args.input
+
     try:
-        df = load_and_clean_excel(input_file)
+        df = load_and_clean_excel(input_file, args.output)
         
         # Show sample output
         print("\n--- Sample Row ---")

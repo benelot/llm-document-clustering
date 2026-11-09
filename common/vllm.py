@@ -1,7 +1,9 @@
 """
 Shared vLLM client (OpenAI-compatible API): chat + embeddings.
 
-Uses the same environment variables as naive/cluster_incidents.py:
+Settings are module attributes. common/cli.py sets them from command-line
+flags; the environment variables below are the fallback defaults
+(same names as in naive/cluster_incidents.py):
   VLLM_EMBED_URL, VLLM_EMBED_MODEL, VLLM_LLM_URL, VLLM_LLM_MODEL,
   VLLM_API_KEY, TIMEOUT_SECONDS, EMBED_API_BATCH_SIZE, EMBED_PREFIX,
   LLM_TEMPERATURE, LLM_MAX_TOKENS, JSON_MODE
@@ -19,9 +21,9 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 VLLM_EMBED_URL = os.getenv("VLLM_EMBED_URL", "http://localhost:8000/v1/embeddings")
-VLLM_EMBED_MODEL = os.getenv("VLLM_EMBED_MODEL", "BAAI/bge-m3")
+VLLM_EMBED_MODEL = os.getenv("VLLM_EMBED_MODEL", "Qwen/Qwen3-Embedding-4B")
 VLLM_LLM_URL = os.getenv("VLLM_LLM_URL", "http://localhost:8001/v1/chat/completions")
-VLLM_LLM_MODEL = os.getenv("VLLM_LLM_MODEL", "qwen:3.8:27b")
+VLLM_LLM_MODEL = os.getenv("VLLM_LLM_MODEL", "Qwen/Qwen3.8-27B")
 VLLM_API_KEY = os.getenv("VLLM_API_KEY", "EMPTY")
 
 TIMEOUT_SECONDS = int(os.getenv("TIMEOUT_SECONDS", "300"))
@@ -39,7 +41,8 @@ LLM_RETRIES = int(os.getenv("LLM_RETRIES", "3"))
 # HTTP
 # ----------------------------------------------------------------------
 
-def post_json(url, payload, timeout=TIMEOUT_SECONDS):
+def post_json(url, payload, timeout=None):
+    timeout = timeout or TIMEOUT_SECONDS
     headers = {"Content-Type": "application/json"}
     if VLLM_API_KEY and VLLM_API_KEY.lower() != "empty":
         headers["Authorization"] = f"Bearer {VLLM_API_KEY}"
@@ -67,8 +70,10 @@ def _with_retries(fn, what):
 # CHAT
 # ----------------------------------------------------------------------
 
-def chat(system, user, temperature=LLM_TEMPERATURE, max_tokens=LLM_MAX_TOKENS):
+def chat(system, user, temperature=None, max_tokens=None):
     """One chat call. Returns the content string."""
+    temperature = LLM_TEMPERATURE if temperature is None else temperature
+    max_tokens = max_tokens or LLM_MAX_TOKENS
     # Qwen3 thinking models: /no_think disables the hidden reasoning chain.
     messages = [
         {"role": "system", "content": system},
@@ -83,7 +88,7 @@ def chat(system, user, temperature=LLM_TEMPERATURE, max_tokens=LLM_MAX_TOKENS):
     if JSON_MODE:
         payload["response_format"] = {"type": "json_object"}
 
-    data = post_json(VLLM_LLM_URL, payload, timeout=600)
+    data = post_json(VLLM_LLM_URL, payload, timeout=max(600, TIMEOUT_SECONDS))
     try:
         choice = data["choices"][0]
     except Exception as e:
@@ -128,12 +133,13 @@ def chat_json(system, user, validate=None, **kw):
     return _with_retries(once, "chat_json")
 
 
-def map_concurrent(fn, items, concurrency=LLM_CONCURRENCY, desc="llm"):
+def map_concurrent(fn, items, concurrency=None, desc="llm"):
     """Run fn(item) for all items with a thread pool. Keeps the input order.
 
     If fn raises after its own retries, the result for that item is the
     exception object, so one bad item does not stop the run.
     """
+    concurrency = concurrency or LLM_CONCURRENCY
     items = list(items)
     results = [None] * len(items)
     done = 0

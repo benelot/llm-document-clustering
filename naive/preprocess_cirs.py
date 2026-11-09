@@ -13,35 +13,34 @@ Expected columns (names are matched case- and whitespace-insensitively):
              AI greatest potential not currently used,
              Hardware issues description
 
-Unit of clustering (CIRS_UNIT):
-  field       (default) one document per non-empty free-text answer.
-              ID = <RespondentID>_<field>, e.g. 1234_fix1. One respondent
-              writes about several topics, so this gives cleaner topics.
-  respondent  one document per respondent, all answers joined.
+Unit of clustering (--unit):
+  report  (default) one document per CIRS report / respondent: all answers
+          joined into one message, each prefixed with its question.
+          ID = RespondentID.
+  field   one document per non-empty answer. ID = <RespondentID>_<field>,
+          e.g. 1234_fix1.
 
-Other settings:
-  CIRS_INCLUDE_QUESTION  1 = prefix each answer with its question in the text
-                         (more context for short answers, but answers to the
-                         same question then lean towards each other). Default 0.
-  CIRS_MIN_CHARS         answers shorter than this are dropped (default 3).
+Examples:
+  python preprocess_cirs.py --input cirs.xlsx
+  python preprocess_cirs.py --input cirs.csv --unit field --include-question
 
-Usage:
-  python preprocess_cirs.py [input.xlsx|input.csv] [output.csv]
-  default: cirs.xlsx -> cleaned_cirs.csv + cleaned_cirs.json
-
-Then run any pipeline with:
-  export CLEANED_FILE=cleaned_cirs.json DATA_PROFILE=cirs
+Output: cleaned_cirs.csv + cleaned_cirs.json. Then run any pipeline with
+--format cirs.
 """
 
-import os
 import re
 import sys
+from pathlib import Path
 
 import pandas as pd
 
-CIRS_UNIT = os.getenv("CIRS_UNIT", "field").lower()
-CIRS_INCLUDE_QUESTION = os.getenv("CIRS_INCLUDE_QUESTION", "0") == "1"
-CIRS_MIN_CHARS = int(os.getenv("CIRS_MIN_CHARS", "3"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common import cli  # noqa: E402
+
+# set from flags in main()
+CIRS_UNIT = "report"
+CIRS_INCLUDE_QUESTION = False
+CIRS_MIN_CHARS = 3
 
 # source column -> output column
 META_COLUMNS = {
@@ -120,7 +119,7 @@ def preprocess(df):
             "priority": "", "status": "", "assignment_group": "",
             "department": meta.get("specialty", ""), "created_at": "",
         }
-        if CIRS_UNIT == "respondent":
+        if CIRS_UNIT == "report":
             text = "\n\n".join(f"{src}: {t}" for src, _, t in answers)
             docs.append({"incident_id": rid, "question": "all",
                          "consolidated_text": text, **base})
@@ -130,16 +129,28 @@ def preprocess(df):
                 docs.append({"incident_id": f"{rid}_{key}", "question": src,
                              "consolidated_text": text, **base})
         else:
-            raise ValueError(f"Unknown CIRS_UNIT: {CIRS_UNIT}. Use field or respondent.")
+            raise ValueError(f"Unknown unit: {CIRS_UNIT}. Use report or field.")
 
     out = pd.DataFrame(docs)
     first = ["incident_id", "respondent_id", "question", "consolidated_text"]
     return out[first + [c for c in out.columns if c not in first]]
 
 
-def main():
-    inp = sys.argv[1] if len(sys.argv) > 1 else "cirs.xlsx"
-    outp = sys.argv[2] if len(sys.argv) > 2 else "cleaned_cirs.csv"
+def main(argv=None):
+    global CIRS_UNIT, CIRS_INCLUDE_QUESTION, CIRS_MIN_CHARS
+    p = cli.make_parser(__doc__)
+    cli.add_flag(p, "--input", "CIRS_INPUT", "cirs.xlsx", str, "CIRS export, .xlsx/.xls or .csv")
+    cli.add_flag(p, "--output", "CIRS_OUTPUT", "cleaned_cirs.csv", str,
+                 "output CSV; a .json with the same name is written too")
+    cli.add_flag(p, "--unit", "CIRS_UNIT", "report", str,
+                 "report = one document per CIRS report, field = one per answer",
+                 choices=["report", "field"])
+    cli.add_flag(p, "--include-question", "CIRS_INCLUDE_QUESTION", False, bool,
+                 "--unit field only: prefix each answer with its question")
+    cli.add_flag(p, "--min-chars", "CIRS_MIN_CHARS", 3, int, "drop answers shorter than this")
+    args = p.parse_args(argv)
+    CIRS_UNIT, CIRS_INCLUDE_QUESTION, CIRS_MIN_CHARS = args.unit, args.include_question, args.min_chars
+    inp, outp = args.input, args.output
     if inp.lower().endswith((".xlsx", ".xls")):
         df = pd.read_excel(inp)
     else:
