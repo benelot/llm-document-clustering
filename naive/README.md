@@ -115,11 +115,11 @@ cluster_assignments.csv     # every document with a cluster_id column
 embeddings.npy              # raw vector matrix (~36 MB), cached
 embeddings.meta.json        # hash + shape, for cache validation
 + shared report: assignments.csv, clusters.csv, summary.txt,
-  umap_clusters.png, gold_report.csv, gold_summary.csv, gold_metrics.json
+  umap_clusters.png, hypothesis_report.csv, hypothesis_summary.csv, hypothesis_metrics.json
 ```
 
 The shared report is described in the root `README.md`, sections Outputs
-and Gold standard.
+and Hypothesis clusters.
 
 - **`cluster_summaries.csv`**: for safety officers and management.
 - **`cluster_summaries.json`**: for IT, audit trail, drill-down.
@@ -134,7 +134,6 @@ so copy the pipeline output there first.
 | Script | Purpose |
 |---|---|
 | `cluster_examples.py` | Top 3 INC IDs per cluster (highest priority first) → `cluster_examples_lookup.csv` |
-| `hypothesis_matches.py` | Checks the hand-made `CLUSTER_MAP` (category → cluster IDs) against the example INCs → `validation_report.csv` |
 | `plot_clusters.py` | PCA + UMAP 2D plot of the clusters → `umap_clusters.png` |
 
 ## Tuning
@@ -177,7 +176,6 @@ naive/
 ├── preprocess_cirs.py
 ├── cluster_incidents.py
 ├── cluster_examples.py
-├── hypothesis_matches.py
 ├── plot_clusters.py
 ├── incidents.xlsx / cirs.xlsx  # input (not in git)
 ├── cleaned_<format>.json       # generated (not in git)

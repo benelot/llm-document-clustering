@@ -27,7 +27,7 @@ There is no noise: every document gets a cluster.
 ## Run
 
 Run from the folder that holds the cleaned input. See the root `README.md`
-for the shared flags (format, endpoints, gold standard):
+for the shared flags (format, endpoints, hypotheses file):
 
 ```bash
 python <repo>/clusterllm_granularity/run.py --format incidents --embed-url ... --llm-url ...

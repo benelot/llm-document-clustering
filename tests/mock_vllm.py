@@ -58,8 +58,8 @@ def items(prompt):
 
 
 def answer(user):
-    if "Kategorie der Fachperson:" in user:  # gold-standard name check
-        cat = re.search(r"Kategorie der Fachperson: (.*)", user).group(1)
+    if "Hypothesen-Cluster:" in user:  # hypothesis name check
+        cat = re.search(r"Hypothesen-Cluster: (.*)", user).group(1)
         name = re.search(r"Cluster-Name: (.*)", user).group(1)
         same = topic(cat) is not None and topic(cat) == topic(name)
         return {"match": "passt" if same else "passt nicht", "reason": "mock"}

@@ -29,18 +29,18 @@ python "$REPO/clusterllm_granularity/run.py"        --format incidents "${API[@]
 echo "=== Format 2: CIRS ==="
 python "$REPO/tests/make_synthetic_cirs.py" cirs.xlsx 120
 python "$REPO/naive/preprocess_cirs.py" --input cirs.xlsx
-# synthetic gold standard: respondents grouped by the topic of their "Fix 1" answer
+# synthetic hypothesis clusters: respondents grouped by the topic of their "Fix 1" answer
 python - <<'PY'
 import json, pandas as pd
 df = pd.read_excel("cirs.xlsx")
-gold = {}
+hypotheses = {}
 for kw, cat in [("Drucker", "Drucken"), ("Warnmeldung", "Warnmeldung"), ("Login", "Login")]:
     ids = df.loc[df["Fix 1"].astype(str).str.contains(kw), "RespondentID"].astype(str).tolist()
-    gold[cat] = ids[:6]
-json.dump(gold, open("gold_cirs.json", "w"), indent=2)
+    hypotheses[cat] = ids[:6]
+json.dump(hypotheses, open("hypotheses_cirs.json", "w"), indent=2)
 PY
-python "$REPO/naive/cluster_incidents.py"           --format cirs --gold-file gold_cirs.json "${API[@]}" "${NAIVE[@]}"
-python "$REPO/llm_classification/run.py"            --format cirs --gold-file gold_cirs.json "${API[@]}" "${CLASSIFY[@]}"
-python "$REPO/clusterllm_granularity/run.py"        --format cirs --gold-file gold_cirs.json "${API[@]}" "${GRAN[@]}"
+python "$REPO/naive/cluster_incidents.py"           --format cirs --hypotheses-file hypotheses_cirs.json "${API[@]}" "${NAIVE[@]}"
+python "$REPO/llm_classification/run.py"            --format cirs --hypotheses-file hypotheses_cirs.json "${API[@]}" "${CLASSIFY[@]}"
+python "$REPO/clusterllm_granularity/run.py"        --format cirs --hypotheses-file hypotheses_cirs.json "${API[@]}" "${GRAN[@]}"
 
 echo "Smoke test OK. Outputs in $WORK/cluster_output"

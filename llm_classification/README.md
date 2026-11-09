@@ -14,14 +14,14 @@ Clustering as classification, after
 3. **Classify:** the LLM assigns each document to one topic, or to
    `0 = Sonstiges`. It handles 10 documents per call.
 4. **Report:** `common/report.py` writes the outputs and evaluates against
-   the gold standard. It uses embeddings only for the UMAP plot.
+   the hypothesis clusters. It uses embeddings only for the UMAP plot.
 
 "Sonstiges" counts as noise (`cluster_id = -1`).
 
 ## Run
 
 Run from the folder that holds the cleaned input. See the root `README.md`
-for the shared flags (format, endpoints, gold standard):
+for the shared flags (format, endpoints, hypotheses file):
 
 ```bash
 python <repo>/llm_classification/run.py --format incidents --embed-url ... --llm-url ...
@@ -35,7 +35,7 @@ defaults:
 | Generate | ~235 |
 | Merge | 1-5 |
 | Classify | ~350 |
-| Gold name check | 1 per gold category |
+| Hypothesis name check | 1 per hypothesis cluster |
 
 ## Resume and manual edits
 

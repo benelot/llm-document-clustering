@@ -35,7 +35,7 @@ from common.data import load_cleaned, truncate            # noqa: E402
 from common.embeddings import embed_texts                 # noqa: E402
 from common.report import write_report, relabel_by_size   # noqa: E402
 from common.profile import P                              # noqa: E402
-from common.gold import load_gold                         # noqa: E402
+from common.hypotheses import load_hypotheses                         # noqa: E402
 from common import cli                                    # noqa: E402
 
 # ----------------------------------------------------------------------
@@ -368,7 +368,7 @@ def main(argv=None):
             "incidents not classifiable (LLM error)": sum(failed),
         },
         extra_cols={"llm_failed": failed},
-        gold=load_gold(args.gold_file), name_check=args.llm_name_check,
+        hypotheses=load_hypotheses(args.hypotheses_file), name_check=args.llm_name_check,
     )
 
 

@@ -11,7 +11,7 @@ Outputs (default folder cluster_output/<format>/naive):
 - cluster_summaries.csv / .json   LLM summary per cluster
 - cluster_assignments.csv         every document with its cluster_id
 - plus the shared report of common/report.py: assignments.csv, clusters.csv,
-  summary.txt, umap_clusters.png, gold_*.csv / gold_metrics.json
+  summary.txt, umap_clusters.png, hypothesis_*.csv / hypothesis_metrics.json
 
 Examples:
   python naive/cluster_incidents.py --format incidents --dim-reduction umap
@@ -764,9 +764,9 @@ def main():
         print("\nTop clusters:")
         print(summary_flat.head(10).to_string(index=False))
 
-    # Shared report: UMAP plot, cluster table, gold-standard evaluation
+    # Shared report: UMAP plot, cluster table, hypothesis evaluation
     from common.report import write_report
-    from common.gold import load_gold
+    from common.hypotheses import load_hypotheses
     info = {
         int(s["cluster_id"]): {
             "cluster_name": s.get("cluster_name", ""),
@@ -780,7 +780,7 @@ def main():
     write_report(
         df.drop(columns=["cluster_id"]), labels, info, OUTPUT_DIR,
         method="Naive (HDBSCAN)", vectors=vectors if PLOT else None, noise_name="Noise",
-        gold=load_gold(ARGS.gold_file), name_check=ARGS.llm_name_check,
+        hypotheses=load_hypotheses(ARGS.hypotheses_file), name_check=ARGS.llm_name_check,
         params={
             "format": ARGS.format, "input": CLEANED_FILE,
             "Embedding": VLLM_EMBED_MODEL if EMBED_BACKEND == "api" else BGE_LOCAL_MODEL,

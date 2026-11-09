@@ -54,8 +54,8 @@ def add_common_args(parser, embeddings=True, llm=True):
              "cleaned input JSON/CSV (default: cleaned_<format>.json)")
     add_flag(g, "--output-dir", "OUTPUT_DIR", None, str,
              "output folder (default: cluster_output/<format>/<approach>)")
-    add_flag(g, "--gold-file", "GOLD_FILE", None, str,
-             "gold-standard groups, JSON {category: [ids]} (default: gold/<format>.json)")
+    add_flag(g, "--hypotheses-file", "HYPOTHESES_FILE", None, str,
+             "hypothesis clusters, JSON {name: [ids]} (default: hypotheses/<format>.json)")
     add_flag(g, "--seed", "SEED", 42, int, "random seed")
     add_flag(g, "--resume", "RESUME", True, bool, "reuse saved stage results")
     add_flag(g, "--plot", "PLOT", True, bool, "make the UMAP plot")
@@ -84,7 +84,7 @@ def add_common_args(parser, embeddings=True, llm=True):
         add_flag(g, "--json-mode", "JSON_MODE", False, bool, "request response_format=json_object")
         add_flag(g, "--timeout", "TIMEOUT_SECONDS", 300, int, "HTTP timeout in seconds")
         add_flag(g, "--llm-name-check", "LLM_NAME_CHECK", True, bool,
-                 "let the LLM judge if cluster names match the gold-standard categories")
+                 "let the LLM judge if cluster names match the hypothesis cluster names")
     return parser
 
 
@@ -98,8 +98,8 @@ def apply_common(args, approach):
     if not args.output_dir:
         args.output_dir = f"cluster_output/{args.format}/{approach}"
     args.output_dir = Path(args.output_dir)
-    if not args.gold_file:
-        args.gold_file = str(REPO_ROOT / "gold" / f"{args.format}.json")
+    if not args.hypotheses_file:
+        args.hypotheses_file = str(REPO_ROOT / "hypotheses" / f"{args.format}.json")
 
     if hasattr(args, "embed_url"):
         vllm.VLLM_EMBED_URL = args.embed_url

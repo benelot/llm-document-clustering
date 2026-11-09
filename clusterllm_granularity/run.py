@@ -41,7 +41,7 @@ from common.data import load_cleaned, truncate                   # noqa: E402
 from common.embeddings import embed_texts, reduce_dimensions     # noqa: E402
 from common.report import write_report, relabel_by_size          # noqa: E402
 from common.profile import P                                     # noqa: E402
-from common.gold import load_gold                                # noqa: E402
+from common.hypotheses import load_hypotheses                                # noqa: E402
 from common import cli                                           # noqa: E402
 
 # ----------------------------------------------------------------------
@@ -312,7 +312,7 @@ def main(argv=None):
     write_report(
         df, labels, info, OUTPUT_DIR,
         method="ClusterLLM granularity", vectors=vectors if PLOT else None, noise_name="Noise",
-        gold=load_gold(args.gold_file), name_check=args.llm_name_check,
+        hypotheses=load_hypotheses(args.hypotheses_file), name_check=args.llm_name_check,
         params={
             "format": args.format, "input": args.input,
             "LLM": vllm.VLLM_LLM_MODEL, "Embedding": vllm.VLLM_EMBED_MODEL,

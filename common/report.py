@@ -5,12 +5,12 @@ write_report() writes into out_dir:
   assignments.csv     one row per document: cluster_id, cluster_name, noise flag,
                       metadata, UMAP coordinates, text preview
   clusters.csv        one row per cluster: name, size, share, top-3 examples,
-                      gold categories inside ("" + new_topic=True = outside the gold standard)
-  summary.txt         totals, gold-standard evaluation, clusters by size, parameters
+                      hypothesis clusters inside (new_topic=True: none inside)
+  summary.txt         totals, hypothesis evaluation, clusters by size, parameters
   umap_clusters.png   2D UMAP plot, one color per cluster
-  gold_report.csv     per gold-standard ID: where it landed
-  gold_summary.csv    per gold category: together, best cluster, shared with, LLM name check
-  gold_metrics.json   pairwise precision / recall / F1, ARI, noise share of gold IDs
+  hypothesis_report.csv     per hypothesis ID: where it landed
+  hypothesis_summary.csv    per hypothesis cluster: together, best cluster, shared with, LLM name check
+  hypothesis_metrics.json   pairwise precision / recall / F1, ARI, noise share of hypothesis IDs
 
 Cluster id -1 always means noise (HDBSCAN noise or "Sonstiges").
 """
@@ -66,13 +66,13 @@ def _prio_rank(v):
 
 
 # ----------------------------------------------------------------------
-# GOLD-STANDARD EVALUATION
+# HYPOTHESIS EVALUATION
 # ----------------------------------------------------------------------
 
-def _per_category(lookup, names, noise_name, gold):
+def _per_hypothesis(lookup, names, noise_name, hypotheses):
     rows, summary = [], []
-    cluster_hits = {}  # cid -> Counter(category)
-    for cat, ids in gold.items():
+    cluster_hits = {}  # cid -> Counter(hypothesis cluster)
+    for cat, ids in hypotheses.items():
         landed = []
         for i in ids:
             if i not in lookup:
@@ -83,7 +83,7 @@ def _per_category(lookup, names, noise_name, gold):
                 landed.append(cid)
                 if cid != -1:
                     cluster_hits.setdefault(cid, Counter())[cat] += 1
-            rows.append({"gold_category": cat, "id": i,
+            rows.append({"hypothesis_cluster": cat, "id": i,
                          "cluster_id": "" if cid is None else cid,
                          "cluster_name": "" if cid is None else names.get(cid, noise_name),
                          "status": status})
@@ -102,7 +102,7 @@ def _per_category(lookup, names, noise_name, gold):
             else:
                 verdict = "split"
         summary.append({
-            "gold_category": cat, "verdict": verdict,
+            "hypothesis_cluster": cat, "verdict": verdict,
             "together": f"{best_n}/{present}",
             "best_cluster_id": "" if best is None else best,
             "best_cluster_name": "" if best is None else names.get(best, ""),
@@ -110,22 +110,22 @@ def _per_category(lookup, names, noise_name, gold):
             "ids_not_in_dataset": len(ids) - present,
             "all_clusters_hit": ", ".join(f"C{c} ({n})" for c, n in non_noise.most_common()),
         })
-    # separation: which other categories share the best cluster
+    # separation: which other hypothesis clusters share the best cluster
     for r in summary:
         best = r["best_cluster_id"]
-        others = [] if best == "" else [c for c in cluster_hits.get(best, {}) if c != r["gold_category"]]
+        others = [] if best == "" else [c for c in cluster_hits.get(best, {}) if c != r["hypothesis_cluster"]]
         r["shared_with"] = ", ".join(others)
     return pd.DataFrame(rows), pd.DataFrame(summary), cluster_hits
 
 
-def _pairwise_metrics(lookup, gold):
-    """Compare the clustering with the gold groups on the gold IDs only.
+def _pairwise_metrics(lookup, hypotheses):
+    """Compare the clustering with the hypothesis clusters, on their IDs only.
 
-    An ID in several categories counts as 'together' with all of them.
+    An ID in several hypothesis clusters counts as "together" with all of them.
     Noise IDs count as singletons (never together with anything).
     """
     cats = {}
-    for cat, ids in gold.items():
+    for cat, ids in hypotheses.items():
         for i in ids:
             if i in lookup:
                 cats.setdefault(i, []).append(cat)
@@ -147,9 +147,9 @@ def _pairwise_metrics(lookup, gold):
         ari = float(adjusted_rand_score([cats[i][0] for i in items], [str(pred[i]) for i in items]))
     r = lambda x: None if x is None else round(float(x), 3)
     return {
-        "gold_ids_in_dataset": len(items),
-        "gold_ids_in_noise": sum(1 for i in items if lookup[i] == -1),
-        "pairs_together_in_gold": tp + fn,
+        "hypothesis_ids_in_dataset": len(items),
+        "hypothesis_ids_in_noise": sum(1 for i in items if lookup[i] == -1),
+        "pairs_together_in_hypotheses": tp + fn,
         "pairs_together_in_clustering": tp + fp,
         "pairwise_precision": r(prec), "pairwise_recall": r(rec), "pairwise_f1": r(f1),
         "ari": r(ari),
@@ -157,17 +157,18 @@ def _pairwise_metrics(lookup, gold):
 
 
 def _name_check(summary, cluster_info):
-    """LLM judges if the best cluster's name fits the gold category name."""
+    """LLM judges if the best cluster's name fits the hypothesis cluster name."""
     from common import vllm
     jobs = [r for _, r in summary.iterrows() if r["best_cluster_id"] != ""]
 
     def ask(r):
         info = cluster_info.get(int(r["best_cluster_id"]), {})
-        prompt = f"""Eine Fachperson hat Dokumente von Hand einer Kategorie zugeordnet.
-Ein Clustering-Verfahren hat einen Cluster gefunden, in dem die meisten dieser
-Dokumente liegen. Beschreiben Kategorie und Cluster dasselbe Thema?
+        prompt = f"""Eine Fachperson hat einige Dokumente von Hand zu einem
+Hypothesen-Cluster zusammengefasst und ihm einen Namen gegeben. Ein
+Clustering-Verfahren hat einen Cluster gefunden, in dem die meisten dieser
+Dokumente liegen. Beschreiben beide Cluster dasselbe Thema?
 
-Kategorie der Fachperson: {r['gold_category']}
+Hypothesen-Cluster: {r['hypothesis_cluster']}
 Cluster-Name: {info.get('cluster_name', '')}
 Cluster-Beschreibung: {info.get('description', '') or info.get('root_cause', '')}
 
@@ -181,22 +182,22 @@ Gib JSON zurück:
     res = vllm.map_concurrent(ask, jobs, desc="name-check")
     out = {}
     for r, x in zip(jobs, res):
-        out[r["gold_category"]] = ("error", str(x)[:100]) if isinstance(x, Exception) else x
+        out[r["hypothesis_cluster"]] = ("error", str(x)[:100]) if isinstance(x, Exception) else x
     return out
 
 
-def evaluate_gold(df, names, cluster_info, noise_name, gold, name_check=True):
+def evaluate_hypotheses(df, names, cluster_info, noise_name, hypotheses, name_check=True):
     lookup = dict(zip(df["incident_id"].astype(str), df["cluster_id"].astype(int)))
-    rows, summary, cluster_hits = _per_category(lookup, names, noise_name, gold)
-    metrics = _pairwise_metrics(lookup, gold)
+    rows, summary, cluster_hits = _per_hypothesis(lookup, names, noise_name, hypotheses)
+    metrics = _pairwise_metrics(lookup, hypotheses)
     summary["name_match"], summary["name_reason"] = "", ""
     if name_check:
         checks = _name_check(summary, cluster_info)
-        summary["name_match"] = summary["gold_category"].map(lambda c: checks.get(c, ("", ""))[0])
-        summary["name_reason"] = summary["gold_category"].map(lambda c: checks.get(c, ("", ""))[1])
+        summary["name_match"] = summary["hypothesis_cluster"].map(lambda c: checks.get(c, ("", ""))[0])
+        summary["name_reason"] = summary["hypothesis_cluster"].map(lambda c: checks.get(c, ("", ""))[1])
         counts = Counter(m for m, _ in checks.values())
         metrics["name_check"] = {k: counts.get(k, 0) for k in ("passt", "teilweise", "passt nicht")}
-    cols = ["gold_category", "verdict", "together", "best_cluster_id", "best_cluster_name",
+    cols = ["hypothesis_cluster", "verdict", "together", "best_cluster_id", "best_cluster_name",
             "shared_with", "name_match", "name_reason", "ids_in_noise", "ids_not_in_dataset",
             "all_clusters_hit"]
     return rows, summary[cols], metrics, cluster_hits
@@ -259,7 +260,7 @@ def plot_umap(coords, labels, names, title, out_png, noise_name):
 
 def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
                  noise_name="Noise", params=None, extra_cols=None,
-                 gold=None, name_check=True):
+                 hypotheses=None, name_check=True):
     """
     df            incidents (incident_id, consolidated_text, metadata)
     labels        cluster id per incident, -1 = noise
@@ -268,8 +269,8 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
     noise_name    how noise is called in this method (e.g. "Sonstiges")
     params        dict of run parameters for summary.txt
     extra_cols    {column_name: list/array} added to assignments.csv
-    gold          {category: [ids]} from common.gold.load_gold, or None
-    name_check    ask the LLM if cluster names match the gold categories
+    hypotheses          {name: [ids]} from common.hypotheses.load_hypotheses, or None
+    name_check    ask the LLM if cluster names match the hypothesis cluster names
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -284,19 +285,19 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
     for k, v in (extra_cols or {}).items():
         df[k] = list(v)
 
-    # Gold-standard evaluation (only if gold IDs occur in this dataset)
+    # Hypothesis evaluation (only if hypothesis IDs occur in this dataset)
     ids = set(df["incident_id"].astype(str))
-    has_gold = bool(gold) and any(i in ids for v in gold.values() for i in v)
-    metrics, gold_summary, cluster_hits = None, None, {}
-    if has_gold:
-        gold_rows, gold_summary, metrics, cluster_hits = evaluate_gold(
-            df, names, cluster_info, noise_name, gold, name_check)
-        gold_rows.to_csv(out_dir / "gold_report.csv", index=False, encoding="utf-8")
-        gold_summary.to_csv(out_dir / "gold_summary.csv", index=False, encoding="utf-8")
-        with open(out_dir / "gold_metrics.json", "w", encoding="utf-8") as f:
+    has_hyp = bool(hypotheses) and any(i in ids for v in hypotheses.values() for i in v)
+    metrics, hyp_summary, cluster_hits = None, None, {}
+    if has_hyp:
+        hyp_rows, hyp_summary, metrics, cluster_hits = evaluate_hypotheses(
+            df, names, cluster_info, noise_name, hypotheses, name_check)
+        hyp_rows.to_csv(out_dir / "hypothesis_report.csv", index=False, encoding="utf-8")
+        hyp_summary.to_csv(out_dir / "hypothesis_summary.csv", index=False, encoding="utf-8")
+        with open(out_dir / "hypothesis_metrics.json", "w", encoding="utf-8") as f:
             json.dump(metrics, f, indent=2, ensure_ascii=False)
-    elif gold:
-        print("[report] no gold-standard IDs in this dataset, evaluation skipped")
+    elif hypotheses:
+        print("[report] no hypothesis IDs in this dataset, evaluation skipped")
 
     # UMAP
     if vectors is not None:
@@ -332,8 +333,8 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
             "size": len(g),
             "share_pct": round(100 * len(g) / len(df), 1),
             "top_examples": ", ".join(g["incident_id"].head(3)),
-            "gold_categories": ", ".join(f"{c} ({n})" for c, n in hits.most_common()),
-            "new_topic": (not hits) if has_gold else "",
+            "hypothesis_clusters": ", ".join(f"{c} ({n})" for c, n in hits.most_common()),
+            "new_topic": (not hits) if has_hyp else "",
             **info,
         })
     clusters = pd.DataFrame(rows).sort_values("size", ascending=False)
@@ -349,13 +350,13 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
         f"{what} {noise_name}: {n_noise} ({100 * n_noise / len(df):.1f}%)",
         f"Clusters:            {len(names)}",
     ]
-    if has_gold:
+    if has_hyp:
         m = metrics
         lines += [
-            f"New topics (no gold-standard ID inside): {int((clusters['new_topic'] == True).sum())}",
+            f"New topics (no hypothesis ID inside): {int((clusters['new_topic'] == True).sum())}",
             "",
-            f"Gold standard ({m['gold_ids_in_dataset']} IDs in dataset, "
-            f"{m['gold_ids_in_noise']} of them {noise_name}):",
+            f"Hypothesis clusters ({m['hypothesis_ids_in_dataset']} IDs in dataset, "
+            f"{m['hypothesis_ids_in_noise']} of them {noise_name}):",
             f"  pairwise precision {m['pairwise_precision']}, recall {m['pairwise_recall']}, "
             f"F1 {m['pairwise_f1']}, ARI {m['ari']}",
         ]
@@ -364,14 +365,14 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
             lines.append(f"  LLM name check: {nc['passt']} passt, {nc['teilweise']} teilweise, "
                          f"{nc['passt nicht']} passt nicht")
         lines.append("")
-        for _, r in gold_summary.iterrows():
+        for _, r in hyp_summary.iterrows():
             best = f" -> C{r['best_cluster_id']} {r['best_cluster_name']}" if r["best_cluster_name"] else ""
             extra = f" [{r['name_match']}]" if r["name_match"] else ""
             shared = f" (shared with: {r['shared_with']})" if r["shared_with"] else ""
-            lines.append(f"  {r['gold_category']:<28} {r['verdict']:<22} {r['together']:>5}"
+            lines.append(f"  {r['hypothesis_cluster']:<28} {r['verdict']:<22} {r['together']:>5}"
                          f"{best}{extra}{shared}")
     else:
-        lines += ["Gold-standard evaluation: skipped (no gold file or no gold IDs in this dataset)"]
+        lines += ["Hypothesis evaluation: skipped (no hypotheses file or no hypothesis IDs in this dataset)"]
     lines += ["", "Clusters (by size):"]
     for _, r in clusters.iterrows():
         tag = "NEW " if r["new_topic"] is True else "    "

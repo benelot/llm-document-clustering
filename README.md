@@ -9,8 +9,8 @@ use a local vLLM server (an OpenAI-compatible API) for embeddings and chat.
 | `naive/` | embed, then HDBSCAN, then the LLM names each cluster. Also holds the two preprocessors. |
 | `llm_classification/` | the LLM generates topics, merges them, and classifies each document ([details](llm_classification/README.md)) |
 | `clusterllm_granularity/` | Ward tree; LLM pair questions choose the number of clusters ([details](clusterllm_granularity/README.md)) |
-| `common/` | shared flags, vLLM client, embedding cache, report and gold-standard evaluation |
-| `gold/` | gold standard: hand-made groups of document IDs per category |
+| `common/` | shared flags, vLLM client, embedding cache, report and hypothesis evaluation |
+| `hypotheses/` | hypothesis clusters: hand-made groups of document IDs, each with a name |
 | `docs/approaches.md` | comparison of the approaches |
 | `tests/` | mock vLLM server + synthetic data for a smoke test |
 
@@ -62,11 +62,11 @@ also falls back to an environment variable, which `--help` shows as
 | `--format` | `incidents` | `incidents` (ServiceNow) or `cirs`; also adapts the LLM prompt wording |
 | `--input` | `cleaned_<format>.json` | cleaned input from the preprocessor |
 | `--output-dir` | `cluster_output/<format>/<approach>` | output folder |
-| `--gold-file` | `gold/<format>.json` | gold standard; the evaluation is skipped if the file is missing |
+| `--hypotheses-file` | `hypotheses/<format>.json` | hypothesis clusters; the evaluation is skipped if the file is missing |
 | `--embed-url`, `--embed-model` | localhost, `Qwen/Qwen3-Embedding-4B` | embedding endpoint |
 | `--llm-url`, `--llm-model` | localhost, `Qwen/Qwen3.8-27B` | chat endpoint |
 | `--llm-concurrency` | `8` | parallel requests; vLLM batches them on the server |
-| `--llm-name-check` / `--no-llm-name-check` | on | LLM judges if cluster names match the gold categories |
+| `--llm-name-check` / `--no-llm-name-check` | on | LLM judges if cluster names match the hypothesis cluster names |
 | `--resume` / `--no-resume` | on | reuse saved stage results |
 | `--plot` / `--no-plot` | on | UMAP plot |
 | `--seed` | `42` | random seed |
@@ -93,12 +93,12 @@ Each approach writes to `cluster_output/<format>/<approach>/`:
 | File | Content |
 |---|---|
 | `assignments.csv` | one row per document: `cluster_id`, `cluster_name`, `is_noise`, metadata, UMAP coordinates, text preview |
-| `clusters.csv` | one row per cluster: name, description, size, share, top 3 examples, gold categories inside, `new_topic` |
-| `summary.txt` | documents clustered vs. noise, gold-standard evaluation, clusters by size, parameters |
+| `clusters.csv` | one row per cluster: name, description, size, share, top 3 examples, hypothesis clusters inside, `new_topic` |
+| `summary.txt` | documents clustered vs. noise, hypothesis evaluation, clusters by size, parameters |
 | `umap_clusters.png` | 2D UMAP plot with cluster names and sizes |
-| `gold_report.csv` | per gold ID: the cluster it landed in |
-| `gold_summary.csv` | per gold category: verdict, together, best cluster, shared with, LLM name check |
-| `gold_metrics.json` | pairwise precision, recall, F1, ARI, name check counts |
+| `hypothesis_report.csv` | per hypothesis ID: the cluster it landed in |
+| `hypothesis_summary.csv` | per hypothesis cluster: verdict, together, best cluster, shared with, LLM name check |
+| `hypothesis_metrics.json` | pairwise precision, recall, F1, ARI, name check counts |
 
 Cluster `-1` is noise: HDBSCAN noise, or "Sonstiges" in the LLM
 classification.
@@ -106,43 +106,52 @@ classification.
 The naive approach also writes its original files:
 `cluster_summaries.csv` / `.json` and `cluster_assignments.csv`.
 
-## Gold standard
+## Hypothesis clusters
 
-A person read documents and grouped them into categories by hand. The file
-is `gold/<format>.json`:
+A person read some documents and grouped a handful of them by hand into
+named hypothesis clusters. The file is `hypotheses/<format>.json`:
 
 ```json
 {"Warnmeldung": ["INC1486211", "INC1486534"], "Pumpen / Perfusor": ["INC1514480"]}
 ```
 
-The approaches never see this file. It is used only at the end, to measure
-how close the clustering is to the hand-made groups.
+The approaches never see this file. They put every document into exactly
+one cluster (or noise) on their own. At the end, the report tests two
+things automatically:
+- Do the IDs of one hypothesis cluster land in the same algorithmic cluster,
+  and apart from the IDs of the other hypothesis clusters?
+- Does the name of that algorithmic cluster fit the name of the hypothesis
+  cluster? The LLM judges this.
 
-**Per category** (`gold_summary.csv`):
+The matching algorithmic cluster is the one that holds most of the
+hypothesis IDs, so no map from hypothesis to cluster ID is needed.
+
+**Per hypothesis cluster** (`hypothesis_summary.csv`):
 
 | Column | Meaning |
 |---|---|
-| `together` | IDs in the most common cluster / IDs in the dataset |
+| `together` | IDs in the most common algorithmic cluster / IDs in the dataset |
 | `verdict` | `found` (at least 2 IDs and at least half in one cluster), `split`, `not found (all noise)`, `no IDs in dataset` |
-| `shared_with` | other gold categories in the same cluster; empty means cleanly separated |
-| `name_match` | the LLM compares category name and cluster name: `passt`, `teilweise` or `passt nicht`, with a reason |
+| `shared_with` | other hypothesis clusters in the same algorithmic cluster; empty means cleanly separated |
+| `name_match` | the LLM compares the two names: `passt`, `teilweise` or `passt nicht`, with a reason |
 
-**Overall** (`gold_metrics.json`), computed on the gold IDs only:
+**Overall** (`hypothesis_metrics.json`), computed on the hypothesis IDs only:
 
 | Metric | Meaning |
 |---|---|
-| pairwise precision | of the ID pairs the clustering puts together, the share that the gold standard also puts together |
-| pairwise recall | of the ID pairs the gold standard puts together, the share that the clustering also puts together |
+| pairwise precision | of the ID pairs the clustering puts together, the share that are also together in a hypothesis cluster |
+| pairwise recall | of the ID pairs that are together in a hypothesis cluster, the share that the clustering also puts together |
 | pairwise F1 | precision and recall combined |
 | ARI | agreement corrected for chance: 0 = random, 1 = identical |
 
 - Noise counts as "not together with anything".
-- An ID that is in several categories counts as together with all of them.
+- An ID that is in several hypothesis clusters counts as together with all
+  of them.
 
-A cluster that contains no gold ID is marked `new_topic` in `clusters.csv`.
-These are topics outside the hand-made categories.
+An algorithmic cluster that holds no hypothesis ID is marked `new_topic` in
+`clusters.csv`. These are topics outside your hypotheses.
 
-`gold/cirs.json` does not exist yet. Until it does, the evaluation is
+`hypotheses/cirs.json` does not exist yet. Until it does, the evaluation is
 skipped for CIRS.
 
 ## Smoke test (no vLLM needed)
