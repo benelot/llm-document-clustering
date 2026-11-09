@@ -168,6 +168,24 @@ def map_concurrent(fn, items, concurrency=None, desc="llm"):
 # CONTEXT WINDOW AND SIZE-BASED BATCHING
 # ----------------------------------------------------------------------
 
+def check_chat_server():
+    """One tiny chat request at startup. Stops the run with a clear message
+    if the server cannot be reached, rejects the key or does not know the
+    model, instead of failing later in every call."""
+    payload = {"model": VLLM_LLM_MODEL, "max_tokens": 20, "temperature": 0,
+               "messages": [{"role": "user", "content": "/no_think Antworte nur mit OK."}]}
+    try:
+        data = post_json(VLLM_LLM_URL, payload, timeout=min(120, TIMEOUT_SECONDS))
+        if not data.get("choices"):
+            raise RuntimeError(f"no 'choices' in answer: {str(data)[:200]}")
+    except Exception as e:
+        raise SystemExit(
+            f"error: chat server check failed for --llm-url {VLLM_LLM_URL} "
+            f"with --llm-model {VLLM_LLM_MODEL}:\n  {str(e)[:500]}\n"
+            "Check the URL, the model name and VLLM_API_KEY.")
+    print(f"[check] chat server OK: {VLLM_LLM_URL} ({VLLM_LLM_MODEL})")
+
+
 def detect_context_tokens():
     """Ask the vLLM server for max_model_len of VLLM_LLM_MODEL. None if unknown."""
     base = VLLM_LLM_URL.split("/v1/")[0]

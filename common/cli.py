@@ -93,9 +93,28 @@ def add_common_args(parser, embeddings=True, llm=True):
     return parser
 
 
+def check_url(value, flag, envname):
+    """Stop with a clear message if an endpoint is not a full http(s) URL."""
+    from urllib.parse import urlparse
+    u = urlparse(str(value))
+    if u.scheme in ("http", "https") and u.netloc:
+        return
+    hint = ""
+    if "/" in str(value) and not u.scheme and "." not in str(value).split("/")[0]:
+        hint = " It looks like a model name; that belongs in --llm-model / --embed-model."
+    raise SystemExit(
+        f"error: {flag} must be a full URL like http://<host>:<port>/v1/..., "
+        f"got '{value}' (from the flag or the environment variable {envname}).{hint}")
+
+
 def apply_common(args, approach):
     """Resolve per-format defaults and push settings into the common modules."""
     from common import vllm, embeddings, profile
+
+    if hasattr(args, "embed_url") and getattr(args, "embed_backend", "api") == "api":
+        check_url(args.embed_url, "--embed-url", "VLLM_EMBED_URL")
+    if hasattr(args, "llm_url"):
+        check_url(args.llm_url, "--llm-url", "VLLM_LLM_URL")
 
     profile.set_profile(args.format)
     if not args.input:
@@ -126,8 +145,10 @@ def apply_common(args, approach):
 
 
 def setup_llm_context(args):
-    """Read the context length (flag or server) before the first LLM call."""
+    """Check that the chat server answers, then read the context length
+    (flag or server), before the first real LLM call."""
     from common import vllm
+    vllm.check_chat_server()
     vllm.setup_context(args.llm_context_tokens)
 
 

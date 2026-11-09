@@ -632,7 +632,9 @@ Incidents:
         result["raw_llm_output"] = content
 
     except Exception as e:
+        print(f"[warning] LLM summary failed for this cluster: {str(e)[:300]}")
         result = fallback_summary(group, reason=str(e))
+        result["llm_failed"] = True
 
     result["cluster_size"] = len(group)
     result["sample_incident_ids"] = sample["incident_id"].tolist()
@@ -717,6 +719,19 @@ def main():
             summary["cluster_id"] = int(cluster_id)
             summaries.append(summary)
 
+    # LLM failures must not go unnoticed
+    failed = [s for s in summaries if s.get("llm_failed")]
+    if failed:
+        print("\n" + "!" * 70)
+        print(f"WARNING: the LLM summary failed for {len(failed)} of {len(summaries)} "
+              f"clusters. They are named 'Uncategorized cluster'.")
+        print(f"First error: {str(failed[0].get('root_cause', ''))[:300]}")
+        print("!" * 70 + "\n")
+        attempted = [s for s in summaries if s.get("cluster_size", 0) >= MIN_LABEL_CLUSTER_SIZE]
+        if len(failed) == len(attempted):
+            raise SystemExit("error: every LLM summary failed. Check --llm-url, "
+                             "--llm-model and VLLM_API_KEY. No outputs written.")
+
     # Flatten summary for CSV
     summary_flat = pd.DataFrame([
         {
@@ -797,6 +812,7 @@ def main():
             "HDBSCAN min_cluster_size / min_samples / method":
                 f"{HDBSCAN_MIN_CLUSTER_SIZE} / {HDBSCAN_MIN_SAMPLES} / {HDBSCAN_SELECTION_METHOD}",
             "DIM_REDUCTION": f"{DIM_REDUCTION} ({DIMRED_N_COMPONENTS} dims)",
+            "clusters with failed LLM summary": len(failed),
         },
     )
 
