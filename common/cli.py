@@ -81,6 +81,11 @@ def add_common_args(parser, embeddings=True, llm=True):
         add_flag(g, "--llm-retries", "LLM_RETRIES", 3, int, "retries per failed request")
         add_flag(g, "--llm-temperature", "LLM_TEMPERATURE", 0.1, float, "sampling temperature")
         add_flag(g, "--llm-max-tokens", "LLM_MAX_TOKENS", 4000, int, "max tokens per answer")
+        add_flag(g, "--llm-context-tokens", "LLM_CONTEXT_TOKENS", 0, int,
+                 "context length of the chat model; 0 = ask the server (/v1/models "
+                 "max_model_len), fallback 32768. Batches are split to fit it.")
+        add_flag(g, "--chars-per-token", "CHARS_PER_TOKEN", 3.0, float,
+                 "estimate used to turn the token budget into characters")
         add_flag(g, "--json-mode", "JSON_MODE", False, bool, "request response_format=json_object")
         add_flag(g, "--timeout", "TIMEOUT_SECONDS", 300, int, "HTTP timeout in seconds")
         add_flag(g, "--llm-name-check", "LLM_NAME_CHECK", True, bool,
@@ -116,7 +121,14 @@ def apply_common(args, approach):
         vllm.LLM_MAX_TOKENS = args.llm_max_tokens
         vllm.JSON_MODE = args.json_mode
         vllm.TIMEOUT_SECONDS = args.timeout
+        vllm.CHARS_PER_TOKEN = args.chars_per_token
     return args
+
+
+def setup_llm_context(args):
+    """Read the context length (flag or server) before the first LLM call."""
+    from common import vllm
+    vllm.setup_context(args.llm_context_tokens)
 
 
 def print_settings(args):

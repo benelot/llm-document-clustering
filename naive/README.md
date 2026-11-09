@@ -147,7 +147,7 @@ Defaults work for ~3,500 incidents.
 | `--hdbscan-selection-method` | `leaf` | — | — (`eom` gives fewer, larger clusters) |
 | `--min-label-cluster-size` | `5` | LLM labels noise clusters | too few clusters summarized |
 | `--max-incidents-per-cluster` | `8` | — | Qwen context too long |
-| `--max-chars-per-incident` | `1500` | — | important details cut off |
+| `--max-chars-per-incident` | `0` (none) | — | — (optional cap; texts are fitted to the context anyway) |
 | `--llm-temperature` | `0.1` | — | summaries inconsistent |
 | `--dbscan-eps-percentile` | `75` | — | fallback clusters too broad |
 | `--dim-reduction` | `none` | — | — (`none`, `pca` or `umap`; reduces dims before clustering, `umap` recommended) |

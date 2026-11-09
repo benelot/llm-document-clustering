@@ -60,13 +60,13 @@ Use `--no-resume` to start from scratch.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--gen-batch-size` | `15` | documents per label generation call |
-| `--gen-max-chars` | `600` | text per document in generation |
+| `--gen-batch-size` | `15` | max documents per label generation call; fewer if they do not fit the context |
+| `--gen-max-chars` | `0` | optional cap per document in generation, `0` = none |
 | `--gen-sample-size` | `0` | documents used for generation, `0` = all |
 | `--merge-chunk-size` | `200` | labels per pre-merge call |
 | `--target-min-labels` / `--target-max-labels` | `15` / `40` | size of the final topic list |
-| `--classify-batch-size` | `10` | documents per classification call, `1` = as in the paper |
-| `--classify-max-chars` | `1000` | text per document in classification |
+| `--classify-batch-size` | `10` | max documents per classification call, `1` = as in the paper; fewer if they do not fit the context |
+| `--classify-max-chars` | `0` | optional cap per document in classification, `0` = none |
 
 ## Outputs
 

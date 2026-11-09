@@ -44,7 +44,7 @@ naming call per cluster. `--help` lists every flag.
 | `--dimred-n-components` | `10` | target dims |
 | `--k-min` / `--k-max` | `10` / `100` | candidate range for the number of clusters |
 | `--pairs-per-merge` | `5` | LLM questions per merge step |
-| `--pair-max-chars` | `1000` | text per document in a pair question |
+| `--pair-max-chars` | `0` | optional cap per document in a pair question, `0` = none |
 | `--granularity-question` | depends on `--format` | the "same category?" question; this defines the granularity |
 | `--force-k` | `0` | `>0` skips the pair stage and uses this k |
 | `--name-samples` | `8` | central documents shown for naming |

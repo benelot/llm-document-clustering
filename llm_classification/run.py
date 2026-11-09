@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common import vllm                                   # noqa: E402
-from common.data import load_cleaned, truncate            # noqa: E402
+from common.data import load_cleaned                      # noqa: E402
 from common.embeddings import embed_texts                 # noqa: E402
 from common.report import write_report, relabel_by_size   # noqa: E402
 from common.profile import P                              # noqa: E402
@@ -44,9 +44,9 @@ from common import cli                                    # noqa: E402
 
 OUTPUT_DIR = STAGE_DIR = None
 RESUME, SEED, PLOT = True, 42, True
-GEN_BATCH_SIZE, GEN_MAX_CHARS, GEN_SAMPLE_SIZE = 15, 600, 0
+GEN_BATCH_SIZE, GEN_MAX_CHARS, GEN_SAMPLE_SIZE = 15, 0, 0
 MERGE_CHUNK_SIZE, TARGET_MIN_LABELS, TARGET_MAX_LABELS = 200, 15, 40
-CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS = 10, 1000
+CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS = 10, 0
 NOISE_NAME = "Sonstiges"
 DOMAIN = P["system"]
 
@@ -55,8 +55,10 @@ def parse_args(argv=None):
     p = cli.make_parser(__doc__)
     cli.add_common_args(p)
     g = p.add_argument_group("1. label generation")
-    cli.add_flag(g, "--gen-batch-size", "GEN_BATCH_SIZE", 15, int, "documents per generation call")
-    cli.add_flag(g, "--gen-max-chars", "GEN_MAX_CHARS", 600, int, "characters per document in generation")
+    cli.add_flag(g, "--gen-batch-size", "GEN_BATCH_SIZE", 15, int,
+                 "max documents per generation call (fewer if they do not fit the context)")
+    cli.add_flag(g, "--gen-max-chars", "GEN_MAX_CHARS", 0, int,
+                 "optional cap per document in generation, 0 = none")
     cli.add_flag(g, "--gen-sample-size", "GEN_SAMPLE_SIZE", 0, int,
                  "documents used for generation, 0 = all")
     g = p.add_argument_group("2. label merging")
@@ -65,9 +67,10 @@ def parse_args(argv=None):
     cli.add_flag(g, "--target-max-labels", "TARGET_MAX_LABELS", 40, int, "max topics in final list")
     g = p.add_argument_group("3. classification")
     cli.add_flag(g, "--classify-batch-size", "CLASSIFY_BATCH_SIZE", 10, int,
-                 "documents per classification call, 1 = as in the paper")
-    cli.add_flag(g, "--classify-max-chars", "CLASSIFY_MAX_CHARS", 1000, int,
-                 "characters per document in classification")
+                 "max documents per classification call (fewer if they do not fit the "
+                 "context), 1 = as in the paper")
+    cli.add_flag(g, "--classify-max-chars", "CLASSIFY_MAX_CHARS", 0, int,
+                 "optional cap per document in classification, 0 = none")
     return cli.apply_common(p.parse_args(argv), "llm_classification")
 
 
@@ -87,7 +90,7 @@ def _read_json(path):
 # ----------------------------------------------------------------------
 
 def _gen_prompt(texts):
-    items = "\n".join(f"[{i + 1}] {truncate(t, GEN_MAX_CHARS)}" for i, t in enumerate(texts))
+    items = "\n".join(f"[{i + 1}] {t}" for i, t in enumerate(texts))
     return f"""Hier sind {len(texts)} {P['items_long']}.
 
 Finde die Themen, die in diesen {P['items']} vorkommen. Ein Thema ist eine
@@ -117,9 +120,12 @@ def stage_generate(df):
     if GEN_SAMPLE_SIZE > 0:
         idx = idx[:GEN_SAMPLE_SIZE]
     texts = df["consolidated_text"].tolist()
-    batches = [[texts[i] for i in idx[s:s + GEN_BATCH_SIZE]]
-               for s in range(0, len(idx), GEN_BATCH_SIZE)]
-    print(f"[generate] {len(batches)} batches of up to {GEN_BATCH_SIZE} incidents")
+    fixed = len(DOMAIN) + len(_gen_prompt([])) + 50
+    packed, n_cut = vllm.pack_batches([(i, texts[i]) for i in idx], fixed, GEN_BATCH_SIZE,
+                                      max_doc_chars=GEN_MAX_CHARS)
+    batches = [[t for _, t in b] for b in packed]
+    print(f"[generate] {len(idx)} documents in {len(batches)} batches "
+          f"(up to {GEN_BATCH_SIZE} per batch, fitted to the context); {n_cut} cut")
 
     def run(batch):
         obj = vllm.chat_json(DOMAIN, _gen_prompt(batch),
@@ -235,7 +241,7 @@ def stage_merge(raw):
 def _classify_prompt(label_list, texts):
     labels = "\n".join(f"{i + 1}: {l['name']} - {l.get('description', '')}"
                        for i, l in enumerate(label_list))
-    items = "\n".join(f"[{i + 1}] {truncate(t, CLASSIFY_MAX_CHARS)}" for i, t in enumerate(texts))
+    items = "\n".join(f"[{i + 1}] {t}" for i, t in enumerate(texts))
     example = ", ".join(f'"{i + 1}": <nr>' for i in range(min(len(texts), 3)))
     return f"""Ordne jede {P['item']} genau einem Thema zu.
 
@@ -265,10 +271,14 @@ def stage_classify(df, label_list):
 
     todo = df[~df["incident_id"].isin(done)]
     rows = list(zip(todo["incident_id"], todo["consolidated_text"]))
-    batches = [rows[i:i + CLASSIFY_BATCH_SIZE] for i in range(0, len(rows), CLASSIFY_BATCH_SIZE)]
+    fixed = len(DOMAIN) + len(_classify_prompt(label_list, [])) + 100
+    batches, n_cut = vllm.pack_batches(rows, fixed, CLASSIFY_BATCH_SIZE,
+                                       max_doc_chars=CLASSIFY_MAX_CHARS)
     k = len(label_list)
     lock = threading.Lock()
-    print(f"[classify] {len(rows)} incidents in {len(batches)} batches, {k} labels")
+    print(f"[classify] {len(rows)} documents in {len(batches)} batches "
+          f"(up to {CLASSIFY_BATCH_SIZE} per batch, fitted to the context), {k} labels; "
+          f"{n_cut} cut")
 
     def ask(batch):
         n = len(batch)
@@ -322,6 +332,7 @@ def main(argv=None):
     global CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS
     args = parse_args(argv)
     cli.print_settings(args)
+    cli.setup_llm_context(args)
     OUTPUT_DIR, STAGE_DIR = args.output_dir, args.output_dir / "stages"
     RESUME, SEED, PLOT, DOMAIN = args.resume, args.seed, args.plot, P["system"]
     GEN_BATCH_SIZE, GEN_MAX_CHARS, GEN_SAMPLE_SIZE = \

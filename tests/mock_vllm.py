@@ -104,9 +104,24 @@ def answer(user):
     return {"error": "unknown prompt"}
 
 
+CONTEXT = 2048  # small on purpose, so that batch splitting is exercised
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
+
+    def do_GET(self):
+        if self.path.endswith("/v1/models"):
+            raw = json.dumps({"data": [{"id": "Qwen/Qwen3.8-27B", "max_model_len": CONTEXT}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        else:
+            self.send_response(404)
+            self.end_headers()
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -115,6 +130,14 @@ class H(BaseHTTPRequestHandler):
             out = {"data": data}
         else:
             user = body["messages"][-1]["content"]
+            chars = sum(len(m["content"]) for m in body["messages"])
+            if chars / 3 + body.get("max_tokens", 0) > CONTEXT:
+                raw = json.dumps({"error": f"prompt too long: {chars} chars"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
             content = json.dumps(answer(user), ensure_ascii=False)
             if rnd.random() < 0.05:
                 content = content[: len(content) // 2]  # broken JSON

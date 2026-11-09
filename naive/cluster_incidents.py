@@ -75,8 +75,9 @@ def _build_parser():
                  "smaller clusters get no LLM summary")
     cli.add_flag(g, "--max-incidents-per-cluster", "MAX_INCIDENTS_PER_CLUSTER", 8, int,
                  "documents shown to the LLM per cluster")
-    cli.add_flag(g, "--max-chars-per-incident", "MAX_CHARS_PER_INCIDENT", 1500, int,
-                 "characters per document shown to the LLM")
+    cli.add_flag(g, "--max-chars-per-incident", "MAX_CHARS_PER_INCIDENT", 0, int,
+                 "optional cap per document shown to the LLM, 0 = none "
+                 "(documents are fitted to the context anyway)")
     return p
 
 
@@ -473,7 +474,8 @@ def cluster_vectors(X):
 # ----------------------------------------------------------------------
 # LLM HELPERS
 # ----------------------------------------------------------------------
-def llm_generate(messages, temperature=LLM_TEMPERATURE, max_tokens=LLM_MAX_TOKENS):
+def llm_generate(messages, temperature=LLM_TEMPERATURE, max_tokens=None):
+    max_tokens = max_tokens or LLM_MAX_TOKENS
     # Qwen3 thinking models spend tokens on a hidden reasoning chain and can
     # return content=null if that chain eats the budget. Disable thinking:
     # /no_think in the user turn is the portable, version-proof switch.
@@ -562,12 +564,15 @@ def label_cluster(group):
 
     sample = group.head(MAX_INCIDENTS_PER_CLUSTER)
 
+    # Fit the texts into the model's context; only cut if they do not fit.
+    from common import vllm as _vllm
+    fitted, _ = _vllm.fit_docs(sample["consolidated_text"].astype(str).tolist(),
+                               fixed_chars=3000, per_item_chars=250,
+                               max_doc_chars=MAX_CHARS_PER_INCIDENT)
+
     incident_lines = []
 
-    for _, row in sample.iterrows():
-        text = str(row.get("consolidated_text", ""))
-        if len(text) > MAX_CHARS_PER_INCIDENT:
-            text = text[:MAX_CHARS_PER_INCIDENT] + "..."
+    for (_, row), text in zip(sample.iterrows(), fitted):
 
         if DATA_PROFILE == "cirs":
             incident_lines.append(
@@ -659,7 +664,11 @@ def load_cleaned(path):
 # ----------------------------------------------------------------------
 
 def main():
+    global LLM_MAX_TOKENS
     cli.print_settings(ARGS)
+    from common import vllm as _vllm
+    cli.setup_llm_context(ARGS)
+    LLM_MAX_TOKENS = _vllm.LLM_MAX_TOKENS  # may be lowered to fit the context
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Loading cleaned incidents...")

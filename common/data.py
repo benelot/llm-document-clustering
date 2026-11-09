@@ -27,5 +27,8 @@ def load_cleaned(path=CLEANED_FILE):
 
 
 def truncate(text, max_chars):
+    """Cut text to max_chars; 0 or None = no cut."""
     text = str(text)
-    return text if len(text) <= max_chars else text[:max_chars] + "..."
+    if not max_chars or len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "..."

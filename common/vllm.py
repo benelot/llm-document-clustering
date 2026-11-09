@@ -36,6 +36,12 @@ JSON_MODE = os.getenv("JSON_MODE", "0").lower() == "1"
 LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "8"))
 LLM_RETRIES = int(os.getenv("LLM_RETRIES", "3"))
 
+# Context window of the chat model, in tokens. Set by setup_context():
+# read from the server (/v1/models -> max_model_len), else the fallback.
+LLM_CONTEXT_TOKENS = 32768
+CHARS_PER_TOKEN = 3.0      # cautious estimate for German text
+CONTEXT_SAFETY_TOKENS = 256  # chat template, system prompt overhead
+
 
 # ----------------------------------------------------------------------
 # HTTP
@@ -156,6 +162,122 @@ def map_concurrent(fn, items, concurrency=None, desc="llm"):
             if done % max(1, len(items) // 20) == 0 or done == len(items):
                 print(f"[{desc}] {done}/{len(items)}")
     return results
+
+
+# ----------------------------------------------------------------------
+# CONTEXT WINDOW AND SIZE-BASED BATCHING
+# ----------------------------------------------------------------------
+
+def detect_context_tokens():
+    """Ask the vLLM server for max_model_len of VLLM_LLM_MODEL. None if unknown."""
+    base = VLLM_LLM_URL.split("/v1/")[0]
+    url = base + "/v1/models"
+    headers = {}
+    if VLLM_API_KEY and VLLM_API_KEY.lower() != "empty":
+        headers["Authorization"] = f"Bearer {VLLM_API_KEY}"
+    try:
+        r = requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+        models = r.json().get("data", [])
+    except Exception as e:
+        print(f"[context] could not read {url}: {str(e)[:150]}")
+        return None
+    match = [m for m in models if m.get("id") == VLLM_LLM_MODEL or m.get("root") == VLLM_LLM_MODEL]
+    if not match and len(models) == 1:
+        match = models
+    if not match:
+        print(f"[context] model {VLLM_LLM_MODEL} not in {[m.get('id') for m in models]}")
+        return None
+    n = match[0].get("max_model_len")
+    return int(n) if n else None
+
+
+def setup_context(context_tokens=0):
+    """Set LLM_CONTEXT_TOKENS: the given value if > 0, else ask the server,
+    else keep the fallback. Also makes sure the answer budget fits."""
+    global LLM_CONTEXT_TOKENS, LLM_MAX_TOKENS
+    if context_tokens and context_tokens > 0:
+        LLM_CONTEXT_TOKENS = int(context_tokens)
+        src = "flag --llm-context-tokens"
+    else:
+        found = detect_context_tokens()
+        if found:
+            LLM_CONTEXT_TOKENS, src = found, "server max_model_len"
+        else:
+            src = "fallback (set --llm-context-tokens to override)"
+    if LLM_MAX_TOKENS > LLM_CONTEXT_TOKENS // 2:
+        new = LLM_CONTEXT_TOKENS // 4
+        print(f"[context] --llm-max-tokens {LLM_MAX_TOKENS} is too large for a context of "
+              f"{LLM_CONTEXT_TOKENS}; using {new}")
+        LLM_MAX_TOKENS = new
+    print(f"[context] {LLM_CONTEXT_TOKENS} tokens ({src}); prompt budget "
+          f"{prompt_char_budget()} characters")
+    return LLM_CONTEXT_TOKENS
+
+
+def prompt_char_budget():
+    """How many characters a prompt (system + user) may have."""
+    tokens = LLM_CONTEXT_TOKENS - LLM_MAX_TOKENS - CONTEXT_SAFETY_TOKENS
+    return max(0, int(tokens * CHARS_PER_TOKEN))
+
+
+def pack_batches(items, fixed_chars, max_items, per_item_chars=12, max_doc_chars=0):
+    """Split [(key, text), ...] into batches that fit the prompt budget.
+
+    fixed_chars     length of the prompt without any document (template,
+                    label list, system prompt)
+    max_items       upper limit of documents per batch
+    per_item_chars  overhead per document ("[12] ", newline)
+    max_doc_chars   optional hard cap per document, 0 = none
+
+    A document is only cut if it does not fit into one prompt on its own.
+    Returns (batches, n_cut), batches = [[(key, text), ...], ...].
+    """
+    budget = prompt_char_budget()
+    cap = budget - fixed_chars - per_item_chars
+    if cap < 300:
+        raise RuntimeError(
+            f"Prompt budget too small: {budget} chars, template alone {fixed_chars}. "
+            "Lower --llm-max-tokens or the batch size, or check --llm-context-tokens.")
+    if max_doc_chars:
+        cap = min(cap, max_doc_chars)
+    batches, cur, size, n_cut = [], [], fixed_chars, 0
+    for key, text in items:
+        text = str(text)
+        if len(text) > cap:
+            text, n_cut = text[:cap] + "...", n_cut + 1
+        need = len(text) + per_item_chars
+        if cur and (len(cur) >= max_items or size + need > budget):
+            batches.append(cur)
+            cur, size = [], fixed_chars
+        cur.append((key, text))
+        size += need
+    if cur:
+        batches.append(cur)
+    return batches, n_cut
+
+
+def fit_docs(texts, fixed_chars, per_item_chars=12, max_doc_chars=0):
+    """Cut several documents that must share ONE prompt (pairs, naming)
+    to equal shares of the budget, only if they do not fit as they are.
+    Returns (texts, n_cut)."""
+    budget = prompt_char_budget() - fixed_chars
+    texts = [str(t) for t in texts]
+    if max_doc_chars:
+        texts = [t if len(t) <= max_doc_chars else t[:max_doc_chars] + "..." for t in texts]
+    total = sum(len(t) + per_item_chars for t in texts)
+    if total <= budget:
+        return texts, 0
+    # give short texts what they need, share the rest among the long ones
+    remaining, out = budget, list(texts)
+    order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+    n_cut = 0
+    for k, i in enumerate(order):
+        share = remaining // (len(order) - k) - per_item_chars
+        if len(texts[i]) > share:
+            out[i], n_cut = texts[i][:max(100, share)] + "...", n_cut + 1
+        remaining -= len(out[i]) + per_item_chars
+    return out, n_cut
 
 
 # ----------------------------------------------------------------------

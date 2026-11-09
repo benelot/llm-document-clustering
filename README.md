@@ -66,10 +66,28 @@ also falls back to an environment variable, which `--help` shows as
 | `--embed-url`, `--embed-model` | localhost, `Qwen/Qwen3-Embedding-4B` | embedding endpoint |
 | `--llm-url`, `--llm-model` | localhost, `Qwen/Qwen3.8-27B` | chat endpoint |
 | `--llm-concurrency` | `8` | parallel requests; vLLM batches them on the server |
+| `--llm-context-tokens` | `0` = ask the server | context length of the chat model; read from `/v1/models` (`max_model_len`), fallback 32768 |
 | `--llm-name-check` / `--no-llm-name-check` | on | LLM judges if cluster names match the hypothesis cluster names |
 | `--resume` / `--no-resume` | on | reuse saved stage results |
 | `--plot` / `--no-plot` | on | UMAP plot |
 | `--seed` | `42` | random seed |
+
+## Long documents
+
+No document is cut at a fixed length. At startup, each script asks the vLLM
+server for the context length of the chat model (`max_model_len` from
+`/v1/models`). From this it computes how many characters fit into one
+prompt. The answer budget (`--llm-max-tokens`) is kept free, and about 3
+characters count as one token.
+
+- Batches are packed up to this limit. If documents are long, a batch holds
+  fewer documents than its maximum, for example `--classify-batch-size`.
+- A document is only cut if it does not fit into one prompt on its own.
+  The log reports how many were cut.
+- The embeddings always get the full text.
+
+If the server does not report the context length, set it with
+`--llm-context-tokens`.
 
 ## Input formats
 

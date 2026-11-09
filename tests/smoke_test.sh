@@ -15,7 +15,7 @@ sleep 1
 
 API=(--embed-url "http://127.0.0.1:$PORT/v1/embeddings"
      --llm-url "http://127.0.0.1:$PORT/v1/chat/completions"
-     --llm-retries 2 --no-resume)
+     --llm-retries 2 --no-resume --llm-max-tokens 400)
 NAIVE=(--dim-reduction umap --hdbscan-min-cluster-size 5)
 CLASSIFY=(--target-min-labels 4 --target-max-labels 10)
 GRAN=(--k-min 3 --k-max 20 --pairs-per-merge 3)
