@@ -118,6 +118,5 @@ bash tests/smoke_test.sh
 ```
 
 The test runs all three pipelines on synthetic data in both formats (400
-incidents, 120 survey respondents) against a mock server. It checks only that the code runs. It does not
-check the quality
-of the clusters.
+incidents, 120 survey respondents) against a mock server. It checks only
+that the code runs. It does not check the quality of the clusters.
