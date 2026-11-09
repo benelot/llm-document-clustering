@@ -94,7 +94,8 @@ VLLM_EMBED_MODEL = ARGS.embed_model
 BGE_LOCAL_MODEL = ARGS.bge_local_model
 BGE_LOCAL_BATCH_SIZE = ARGS.bge_local_batch_size
 BGE_MAX_SEQ_LEN = ARGS.bge_max_seq_len
-EMBED_PREFIX = ARGS.embed_prefix
+from common import vllm as _vllm_settings  # noqa: E402
+EMBED_PREFIX = _vllm_settings.EMBED_PREFIX  # instruction (--embed-instruction) + --embed-prefix
 
 VLLM_LLM_URL = ARGS.llm_url
 VLLM_LLM_MODEL = ARGS.llm_model

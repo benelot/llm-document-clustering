@@ -26,6 +26,8 @@ PROFILES = {
             "keine Rolle."
         ),
         "label_en": "Incidents",
+        "embed_instruction": ("Identify the technical topic or problem category of this "
+                              "hospital IT incident report"),
     },
     "survey": {
         "system": (
@@ -46,6 +48,8 @@ PROFILES = {
             "Fachbereiche oder Formulierungen spielen keine Rolle."
         ),
         "label_en": "Documents",
+        "embed_instruction": ("Identify the topic of this clinician's feedback on the "
+                              "electronic health record system"),
     },
 }
 

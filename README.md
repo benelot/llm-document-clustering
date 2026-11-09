@@ -73,6 +73,11 @@ also falls back to an environment variable, which `--help` shows as
 | `--resume` / `--no-resume` | on | reuse saved stage results |
 | `--plot` / `--no-plot` | on | UMAP plot |
 | `--seed` | `42` | random seed |
+| `--embed-instruction` | `auto` | task instruction for Qwen3-Embedding (`Instruct: <task>\nQuery: <text>`), per format; `none` = off, or your own text |
+| `--umap-n-neighbors` | `30` | UMAP plot: larger = more global structure |
+| `--umap-metric` | `cosine` | UMAP plot: distance on the embeddings |
+| `--umap-supervised` / `--no-umap-supervised` | on | also write the supervised plot |
+| `--umap-target-weight` | `0.5` | supervised plot: 0 = labels ignored, 1 = labels dominate |
 
 ## Long documents
 
@@ -115,7 +120,8 @@ Each approach writes to `cluster_output/<format>/<approach>/`:
 | `assignments.csv` | one row per document: `cluster_id`, `cluster_name`, `is_noise`, metadata, UMAP coordinates, text preview |
 | `clusters.csv` | one row per cluster: name, description, size, share, top 3 examples, hypothesis clusters inside, `new_topic` |
 | `summary.txt` | documents clustered vs. noise, hypothesis evaluation, clusters by size, parameters |
-| `umap_clusters.png` | 2D UMAP plot with cluster names and sizes |
+| `umap_clusters.png` | 2D UMAP of the embeddings, colored by cluster: shows how well the clusters agree with the embeddings |
+| `umap_clusters_supervised.png` | same, but UMAP also uses the cluster labels: shows the clusters clearly and which ones are close; the separation is partly enforced, so it does not test the clustering |
 | `hypothesis_report.csv` | per hypothesis ID: the cluster it landed in |
 | `hypothesis_summary.csv` | per hypothesis cluster: verdict, together, best cluster, shared with, LLM name check |
 | `hypothesis_metrics.json` | pairwise precision, recall, F1, ARI, name check counts |

@@ -60,6 +60,20 @@ def add_common_args(parser, embeddings=True, llm=True):
     add_flag(g, "--resume", "RESUME", True, bool, "reuse saved stage results")
     add_flag(g, "--plot", "PLOT", True, bool, "make the UMAP plot")
 
+    g = parser.add_argument_group("UMAP plot")
+    add_flag(g, "--umap-metric", "UMAP_METRIC", "cosine", str, "distance on the embeddings",
+             choices=["cosine", "euclidean"])
+    add_flag(g, "--umap-n-neighbors", "UMAP_N_NEIGHBORS", 30, int,
+             "larger = more global structure, smaller = more local detail")
+    add_flag(g, "--umap-min-dist", "UMAP_MIN_DIST", 0.1, float,
+             "smaller = tighter clumps")
+    add_flag(g, "--umap-pca-dims", "UMAP_PCA_DIMS", 0, int,
+             "PCA before UMAP (faster), 0 = none")
+    add_flag(g, "--umap-supervised", "UMAP_SUPERVISED", True, bool,
+             "also write umap_clusters_supervised.png: UMAP that also uses the cluster labels")
+    add_flag(g, "--umap-target-weight", "UMAP_TARGET_WEIGHT", 0.5, float,
+             "supervised plot: 0 = labels ignored, 1 = labels dominate")
+
     if embeddings:
         g = parser.add_argument_group("embeddings (vLLM API)")
         add_flag(g, "--embed-url", "VLLM_EMBED_URL", "http://localhost:8000/v1/embeddings", str,
@@ -67,7 +81,12 @@ def add_common_args(parser, embeddings=True, llm=True):
         add_flag(g, "--embed-model", "VLLM_EMBED_MODEL", "Qwen/Qwen3-Embedding-4B", str,
                  "embedding model")
         add_flag(g, "--embed-batch-size", "EMBED_API_BATCH_SIZE", 16, int, "texts per embedding call")
-        add_flag(g, "--embed-prefix", "EMBED_PREFIX", "", str, "prefix added to every text")
+        add_flag(g, "--embed-prefix", "EMBED_PREFIX", "", str, "raw prefix added to every text")
+        add_flag(g, "--embed-instruction", "EMBED_INSTRUCTION", "auto", str,
+                 "task instruction for instruction-aware embedding models "
+                 "('Instruct: <task>\\nQuery: <text>'). auto = per-format instruction if the "
+                 "model is a Qwen3-Embedding model, else none; none = off; any other text = "
+                 "your own task description")
         add_flag(g, "--embed-cache-dir", "EMBED_CACHE_DIR", "cluster_output/embed_cache", str,
                  "embedding cache folder")
 
@@ -110,9 +129,25 @@ def check_url(value, flag, envname):
         f"got '{value}' (from the flag or the environment variable {envname}).{hint}")
 
 
+def embed_instruction_prefix(args):
+    """'Instruct: <task>\nQuery: ' for instruction-aware models (Qwen3-Embedding)."""
+    from common.profile import P
+    ins = (args.embed_instruction or "auto").strip()
+    if ins.lower() == "none":
+        return ""
+    if ins.lower() == "auto":
+        model = args.embed_model
+        if getattr(args, "embed_backend", "api") == "local":
+            model = getattr(args, "bge_local_model", model)
+        if "qwen3-embedding" not in str(model).lower():
+            return ""
+        ins = P["embed_instruction"]
+    return f"Instruct: {ins}\nQuery: "
+
+
 def apply_common(args, approach):
     """Resolve per-format defaults and push settings into the common modules."""
-    from common import vllm, embeddings, profile
+    from common import vllm, embeddings, profile, report
 
     if hasattr(args, "embed_url") and getattr(args, "embed_backend", "api") == "api":
         check_url(args.embed_url, "--embed-url", "VLLM_EMBED_URL")
@@ -120,6 +155,11 @@ def apply_common(args, approach):
         check_url(args.llm_url, "--llm-url", "VLLM_LLM_URL")
 
     profile.set_profile(args.format)
+    report.UMAP_SETTINGS.update(
+        metric=args.umap_metric, n_neighbors=args.umap_n_neighbors,
+        min_dist=args.umap_min_dist, pca_dims=args.umap_pca_dims,
+        supervised=args.umap_supervised, target_weight=args.umap_target_weight,
+        random_state=args.seed)
     if not args.input:
         args.input = f"cleaned_{args.format}.json"
     if not args.output_dir:
@@ -133,7 +173,7 @@ def apply_common(args, approach):
         vllm.VLLM_EMBED_URL = args.embed_url
         vllm.VLLM_EMBED_MODEL = args.embed_model
         vllm.EMBED_API_BATCH_SIZE = args.embed_batch_size
-        vllm.EMBED_PREFIX = args.embed_prefix
+        vllm.EMBED_PREFIX = embed_instruction_prefix(args) + args.embed_prefix
         embeddings.EMBED_CACHE_DIR = Path(args.embed_cache_dir)
     if hasattr(args, "llm_url"):
         vllm.VLLM_LLM_URL = args.llm_url

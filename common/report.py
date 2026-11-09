@@ -31,7 +31,7 @@ from common.profile import P
 
 # Columns never copied as metadata into assignments.csv
 RESERVED = {"incident_id", "consolidated_text", "cluster_id", "cluster_name", "is_noise",
-            "umap_x", "umap_y", "text_preview"}
+            "umap_x", "umap_y", "umap_sup_x", "umap_sup_y", "text_preview"}
 
 
 def _meta_cols(df):
@@ -44,7 +44,9 @@ def _meta_cols(df):
         if (vals != "").any():
             cols.append(c)
     return cols
-UMAP_RANDOM_STATE = int(os.getenv("UMAP_RANDOM_STATE", "42"))
+# Set from the --umap-* flags by common/cli.py
+UMAP_SETTINGS = dict(metric="cosine", n_neighbors=30, min_dist=0.1, pca_dims=0,
+                     supervised=True, target_weight=0.5, random_state=42)
 
 
 def relabel_by_size(labels):
@@ -213,20 +215,45 @@ def _palette(n):
     return [base[i % len(base)] for i in range(n)]
 
 
-def umap_2d(vectors):
-    from sklearn.decomposition import PCA
+def umap_2d(vectors, labels=None):
+    """2D UMAP of the embeddings. With labels: supervised UMAP, where the
+    cluster labels pull documents of the same cluster together (-1 = noise
+    counts as unlabeled)."""
     import umap
+    s = UMAP_SETTINGS
     X = vectors
-    if X.shape[1] > 50 and X.shape[0] > 50:
-        X = PCA(n_components=50, random_state=UMAP_RANDOM_STATE).fit_transform(X)
-    return umap.UMAP(n_components=2, n_neighbors=15, min_dist=0.1,
-                     random_state=UMAP_RANDOM_STATE).fit_transform(X)
+    if s["pca_dims"] and X.shape[1] > s["pca_dims"] and X.shape[0] > s["pca_dims"]:
+        from sklearn.decomposition import PCA
+        X = PCA(n_components=s["pca_dims"], random_state=s["random_state"]).fit_transform(X)
+    reducer = umap.UMAP(
+        n_components=2, metric=s["metric"],
+        n_neighbors=min(s["n_neighbors"], max(2, X.shape[0] - 1)),
+        min_dist=s["min_dist"], random_state=s["random_state"],
+        target_metric="categorical", target_weight=s["target_weight"])
+    if labels is None:
+        return reducer.fit_transform(X)
+    return reducer.fit_transform(X, y=np.asarray(labels))
+
+
+def _densest_point(pts, radius):
+    """Label position: centre of the largest clump of the cluster, i.e. the
+    point with the most cluster points within radius, averaged over those
+    points. Keeps the label on the main clump, not in a gap between clumps."""
+    if len(pts) <= 2:
+        return pts[:, 0].mean(), pts[:, 1].mean()
+    from sklearn.neighbors import NearestNeighbors
+    nn = NearestNeighbors(radius=radius).fit(pts)
+    neigh = nn.radius_neighbors(pts, return_distance=False)
+    i = int(np.argmax([len(n) for n in neigh]))
+    c = pts[neigh[i]]
+    return c[:, 0].mean(), c[:, 1].mean()
 
 
 def plot_umap(coords, labels, names, title, out_png, noise_name):
     fig, ax = plt.subplots(figsize=(20, 12))
     cids = sorted(c for c in set(labels.tolist()) if c != -1)
     colors = _palette(len(cids))
+    radius = 0.04 * float(np.ptp(coords, axis=0).max() or 1.0)
 
     noise = labels == -1
     if noise.any():
@@ -236,7 +263,7 @@ def plot_umap(coords, labels, names, title, out_png, noise_name):
         m = labels == cid
         ax.scatter(coords[m, 0], coords[m, 1], color=col, s=8, alpha=0.7,
                    label=f"C{cid} {names.get(cid, '')} ({int(m.sum())})", zorder=2)
-        cx, cy = np.median(coords[m, 0]), np.median(coords[m, 1])
+        cx, cy = _densest_point(coords[m], radius)
         ax.annotate(f"C{cid}", xy=(cx, cy), fontsize=8, fontweight="bold",
                     ha="center", va="center", zorder=5,
                     bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8,
@@ -309,12 +336,21 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
                  f"{len(df) - n_noise}/{len(df)} {P['label_en'].lower()} clustered, "
                  f"{n_noise} {noise_name}")
         plot_umap(coords, labels, names, title, out_dir / "umap_clusters.png", noise_name)
+        if UMAP_SETTINGS["supervised"] and len(names) > 1:
+            print("[report] supervised UMAP 2D for plot...")
+            sup = umap_2d(vectors, labels)
+            df["umap_sup_x"], df["umap_sup_y"] = sup[:, 0], sup[:, 1]
+            w = UMAP_SETTINGS["target_weight"]
+            plot_umap(sup, labels, names,
+                      title + f"\nsupervised UMAP (target_weight {w}): layout partly "
+                      "follows the cluster labels",
+                      out_dir / "umap_clusters_supervised.png", noise_name)
 
     # Assignments, one row per incident
     cols = ["incident_id", "cluster_id", "cluster_name", "is_noise"] \
         + meta_cols \
         + [c for c in (extra_cols or {}) if c not in meta_cols] \
-        + [c for c in ("umap_x", "umap_y") if c in df.columns]
+        + [c for c in ("umap_x", "umap_y", "umap_sup_x", "umap_sup_y") if c in df.columns]
     df["text_preview"] = df["consolidated_text"].str.slice(0, 300)
     df[cols + ["text_preview"]].to_csv(out_dir / "assignments.csv", index=False,
                                        encoding="utf-8")
