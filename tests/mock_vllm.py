@@ -58,6 +58,9 @@ def items(prompt):
 
 
 def answer(user):
+    if "typische Tickets zum Thema" in user:  # report_topics.py --examples llm
+        rows = re.findall(r"^\[(\S+)\] (.*)$", user, flags=re.M)
+        return {"examples": [{"id": i, "text": " ".join(t.split()[:8])} for i, t in rows[:3]]}
     if "Hypothesen-Cluster:" in user:  # hypothesis name check
         cat = re.search(r"Hypothesen-Cluster: (.*)", user).group(1)
         name = re.search(r"Cluster-Name: (.*)", user).group(1)

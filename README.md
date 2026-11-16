@@ -14,6 +14,7 @@ embeddings and chat. A CIRS format will follow.
 | `hypotheses/` | hypothesis clusters: hand-made groups of document IDs, each with a name |
 | `docs/approaches.md` | comparison of the approaches |
 | `compare_runs.py` | compares all runs (approaches, perspectives) in one table and chart |
+| `report_topics.py` | topic overview of one run for reports: tickets per topic and short examples (Markdown + Excel) |
 | `tests/` | mock vLLM server + synthetic data for a smoke test |
 
 ## Where the approaches come from
@@ -233,6 +234,29 @@ classification.
 
 The naive approach also writes its original files:
 `cluster_summaries.csv` / `.json` and `cluster_assignments.csv`.
+
+## Topic overview for reports
+
+```bash
+python report_topics.py --run cluster_output/incidents/llm_classification/process
+```
+
+For each topic, sorted by size: the number of tickets, the share, the
+one-sentence description, and 3 typical examples on one line each, with
+their INC numbers. "Sonstiges" or noise comes last.
+
+- "Typical" means closest to the centre of the topic on the run's UMAP map.
+  Near-duplicate examples are skipped.
+- `--examples short` (default): the original short description of the
+  ticket, cut to `--max-chars` (120). No LLM is used, and the wording is
+  exact. It may contain names: check before sharing.
+- `--examples llm`: the LLM reads the 10 most typical tickets of a topic
+  and writes 3 short, distinct example lines without names. These are more
+  concise, but the wording is the LLM's. Use the INC number to check a line.
+- Outputs in the run folder: `themenuebersicht_short.md/.xlsx` and
+  `themenuebersicht_llm.md/.xlsx`. The two modes do not overwrite each
+  other. The Excel file has one row per topic, plus an "Info" sheet with
+  the run parameters.
 
 ## Comparing runs
 
