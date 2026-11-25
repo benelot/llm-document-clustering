@@ -3,6 +3,7 @@ Data profile: adapts the LLM prompts to the kind of text being clustered.
 
   --format incidents   (default) ServiceNow incident reports, preprocess_incidents.py
   --format survey      EHR survey among clinicians, preprocess_survey.py
+  --format cirs        hospital-wide CIRS reports, preprocess_cirs.py
 (environment fallback: DATA_PROFILE)
 """
 
@@ -50,6 +51,28 @@ PROFILES = {
         "label_en": "Documents",
         "embed_instruction": ("Identify the topic of this clinician's feedback on the "
                               "electronic health record system"),
+    },
+    "cirs": {
+        "system": (
+            "Du analysierst CIRS-Meldungen (Critical Incident Reporting System) eines "
+            "Spitals: kritische Ereignisse und Beinahe-Ereignisse aus allen Bereichen, "
+            "z.B. Pflege, ärztliche Behandlung, Medikation, Diagnostik, Operationen, "
+            "Hygiene, Stürze, Kommunikation, Geräte und Organisation. "
+            "Antworte ausschliesslich mit gültigem JSON, ohne Markdown."
+        ),
+        "item": "Meldung",
+        "items": "Meldungen",
+        "items_long": "CIRS-Meldungen",
+        "category": "Ereigniskategorie",
+        "granularity_question": (
+            "Gehören diese beiden CIRS-Meldungen zum selben übergeordneten Thema, so dass "
+            "man sie in einer Übersicht über alle Meldungen in dieselbe Gruppe einordnen "
+            "würde? Sie müssen nicht dasselbe Detail beschreiben. Unterschiedliche "
+            "Patienten, Personen, Stationen oder Zeitpunkte spielen keine Rolle."
+        ),
+        "label_en": "Reports",
+        "embed_instruction": ("Identify the type of critical incident or near miss described "
+                              "in this hospital CIRS report"),
     },
 }
 

@@ -11,6 +11,11 @@ write_report() writes into out_dir:
   hypothesis_report.csv     per hypothesis ID: where it landed
   hypothesis_summary.csv    per hypothesis cluster: together, best cluster, shared with, LLM name check
   hypothesis_metrics.json   pairwise precision / recall / F1, ARI, noise share of hypothesis IDs
+  reference_agreement.json/.csv   agreement with existing category columns (ref_*),
+                      e.g. the CIRS categories: ARI, AMI, NMI, homogeneity,
+                      completeness, purity
+  reference_crosstab_<col>.csv    clusters x categories counts
+  reference_heatmap_<col>.png     share of each category per cluster
 
 Cluster id -1 always means noise (HDBSCAN noise or "Sonstiges").
 """
@@ -206,6 +211,108 @@ def evaluate_hypotheses(df, names, cluster_info, noise_name, hypotheses, name_ch
 
 
 # ----------------------------------------------------------------------
+# AGREEMENT WITH EXISTING CATEGORIES (ref_* columns)
+# ----------------------------------------------------------------------
+
+REF_EXPLANATION = (
+    "ARI / AMI: agreement corrected for chance (0 = random, 1 = identical). "
+    "homogeneity: each cluster holds one category. completeness: each category "
+    "lies in one cluster. purity: share of documents in the main category of "
+    "their cluster.")
+
+
+def reference_columns(df):
+    """Columns ref_* with at least 2 categories."""
+    cols = []
+    for c in df.columns:
+        if c.startswith("ref_"):
+            v = df[c].fillna("").astype(str).str.strip()
+            if v[v != ""].nunique() >= 2:
+                cols.append(c)
+    return cols
+
+
+def reference_agreement(df, names, out_dir):
+    """Compare clusters (noise excluded) with every ref_* column."""
+    from sklearn import metrics as skm
+    results, tops = {}, {}
+    for col in reference_columns(df):
+        short = col[len("ref_"):]
+        ref = df[col].fillna("").astype(str).str.strip()
+        use = (df["cluster_id"] != -1) & (ref != "")
+        y_true, y_pred = ref[use].to_numpy(), df.loc[use, "cluster_id"].to_numpy()
+        if len(y_true) < 2:
+            continue
+        ct = pd.crosstab(pd.Series(y_pred, name="cluster_id"), pd.Series(y_true, name=short))
+        h, c, v = skm.homogeneity_completeness_v_measure(y_true, y_pred)
+        results[short] = {
+            "categories": int(ct.shape[1]),
+            "documents_compared": int(use.sum()),
+            "documents_without_category": int((ref == "").sum()),
+            "documents_in_noise": int(((df["cluster_id"] == -1) & (ref != "")).sum()),
+            "ari": round(float(skm.adjusted_rand_score(y_true, y_pred)), 3),
+            "ami": round(float(skm.adjusted_mutual_info_score(y_true, y_pred)), 3),
+            "nmi": round(float(skm.normalized_mutual_info_score(y_true, y_pred)), 3),
+            "homogeneity": round(float(h), 3),
+            "completeness": round(float(c), 3),
+            "v_measure": round(float(v), 3),
+            "purity": round(float(ct.max(axis=1).sum() / ct.values.sum()), 3),
+            "inverse_purity": round(float(ct.max(axis=0).sum() / ct.values.sum()), 3),
+        }
+        # counts, with cluster names
+        out = ct.copy()
+        out.insert(0, "cluster_name", [names.get(i, "") for i in out.index])
+        out.to_csv(out_dir / f"reference_crosstab_{short}.csv", encoding="utf-8")
+        # per category: in which cluster does it mainly land?
+        cat_rows = []
+        for cat in ct.columns:
+            colv = ct[cat]
+            best = colv.idxmax()
+            cat_rows.append({"category": cat, "documents": int(colv.sum()),
+                             "main_cluster_id": int(best), "main_cluster_name": names.get(best, ""),
+                             "share_in_main_cluster": round(float(colv.max() / colv.sum()), 3),
+                             "clusters_used": int((colv > 0).sum())})
+        pd.DataFrame(cat_rows).sort_values("documents", ascending=False).to_csv(
+            out_dir / f"reference_categories_{short}.csv", index=False, encoding="utf-8")
+        # per cluster: main category and its share (for clusters.csv)
+        tops[short] = {int(i): (ct.loc[i].idxmax(), float(ct.loc[i].max() / ct.loc[i].sum()))
+                       for i in ct.index}
+        plot_reference_heatmap(ct, names, short, results[short],
+                               out_dir / f"reference_heatmap_{short}.png")
+    if results:
+        with open(out_dir / "reference_agreement.json", "w", encoding="utf-8") as f:
+            json.dump({"explanation": REF_EXPLANATION, "columns": results}, f,
+                      indent=2, ensure_ascii=False)
+        pd.DataFrame(results).T.rename_axis("reference").to_csv(
+            out_dir / "reference_agreement.csv", encoding="utf-8")
+    return results, tops
+
+
+def plot_reference_heatmap(ct, names, short, res, out_png, max_cats=30):
+    """Rows: clusters (by size), columns: the largest categories; colour = share
+    of the cluster's documents in that category."""
+    ct = ct.loc[ct.sum(axis=1).sort_values(ascending=False).index]
+    cats = ct.sum(axis=0).sort_values(ascending=False).index[:max_cats]
+    share = ct[cats].div(ct.sum(axis=1), axis=0)
+    fig, ax = plt.subplots(figsize=(0.45 * len(cats) + 6, 0.32 * len(share) + 3))
+    im = ax.imshow(share.values, cmap="Blues", vmin=0, vmax=1, aspect="auto")
+    ax.set_xticks(range(len(cats)))
+    ax.set_xticklabels([str(c)[:40] for c in cats], rotation=60, ha="right", fontsize=7)
+    ax.set_yticks(range(len(share)))
+    ax.set_yticklabels([f"C{i} {names.get(i, '')}"[:45] + f" ({int(ct.loc[i].sum())})"
+                        for i in share.index], fontsize=7)
+    more = f", largest {len(cats)} of {ct.shape[1]} categories" if ct.shape[1] > len(cats) else ""
+    ax.set_title(f"Clusters vs. existing categories '{short}'{more}\n"
+                 f"ARI {res['ari']}, AMI {res['ami']}, homogeneity {res['homogeneity']}, "
+                 f"completeness {res['completeness']}, purity {res['purity']}",
+                 fontsize=9)
+    fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02, label="share of the cluster")
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=150)
+    plt.close(fig)
+
+
+# ----------------------------------------------------------------------
 # PLOT
 # ----------------------------------------------------------------------
 
@@ -355,6 +462,9 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
     df[cols + ["text_preview"]].to_csv(out_dir / "assignments.csv", index=False,
                                        encoding="utf-8")
 
+    # Agreement with existing categories (ref_* columns, e.g. CIRS)
+    ref_results, ref_tops = reference_agreement(df, names, out_dir)
+
     # Cluster table
     rows = []
     for cid in sorted(names):
@@ -371,6 +481,8 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
             "top_examples": ", ".join(g["incident_id"].head(3)),
             "hypothesis_clusters": ", ".join(f"{c} ({n})" for c, n in hits.most_common()),
             "new_topic": (not hits) if has_hyp else "",
+            **{f"ref_{k}_main": (f"{t[cid][0]} ({100 * t[cid][1]:.0f}%)" if cid in t else "")
+               for k, t in ref_tops.items()},
             **info,
         })
     clusters = pd.DataFrame(rows).sort_values("size", ascending=False)
@@ -409,6 +521,13 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
                          f"{best}{extra}{shared}")
     else:
         lines += ["Hypothesis evaluation: skipped (no hypotheses file or no hypothesis IDs in this dataset)"]
+    if ref_results:
+        lines += ["", "Agreement with existing categories (noise excluded):"]
+        for k, r in ref_results.items():
+            lines.append(f"  {k:<24} {r['categories']:>4} categories: ARI {r['ari']}, "
+                         f"AMI {r['ami']}, homogeneity {r['homogeneity']}, "
+                         f"completeness {r['completeness']}, purity {r['purity']}")
+        lines.append("  " + REF_EXPLANATION)
     lines += ["", "Clusters (by size):"]
     for _, r in clusters.iterrows():
         tag = "NEW " if r["new_topic"] is True else "    "

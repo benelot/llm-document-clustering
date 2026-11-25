@@ -64,6 +64,11 @@ def read_run(d, root):
         row.update({"hyp_found": int(v.str.startswith("found").sum()),
                     "hyp_split": int((v == "split").sum()),
                     "hyp_not_found": int(v.str.startswith("not found").sum())})
+    ra = d / "reference_agreement.json"
+    if ra.exists():  # agreement with existing categories, e.g. CIRS
+        for col, r in json.loads(ra.read_text(encoding="utf-8")).get("columns", {}).items():
+            for m in ("ari", "ami", "homogeneity", "completeness"):
+                row[f"{col}_{m}"] = r.get(m)
     return row
 
 
@@ -152,6 +157,31 @@ def hypothesis_table(runs, root, out):
     print(f"Saved: {out / 'compare_hypotheses.png'}")
 
 
+def plot_reference(df, out):
+    """Without hypothesis clusters: AMI against each existing category column."""
+    cols = [c for c in df.columns if c.endswith("_ami")]
+    if not cols:
+        return
+    d = df.sort_values(cols[0], ascending=True, na_position="first")
+    fig, ax = plt.subplots(figsize=(10, 0.6 * len(d) + 2))
+    h = 0.8 / len(cols)
+    cmap = plt.get_cmap("tab10")
+    for i, c in enumerate(cols):
+        ys = [k + (i - (len(cols) - 1) / 2) * h for k in range(len(d))]
+        ax.barh(ys, d[c].fillna(0).astype(float), height=h, label=c[:-4], color=cmap(i))
+    ax.set_yticks(range(len(d)))
+    ax.set_yticklabels(d["run"], fontsize=8)
+    ax.set_xlim(0, 1)
+    ax.set_xlabel("AMI: agreement with the existing categories (0 = random, 1 = identical)")
+    ax.set_title("Runs compared against the existing categories", fontweight="bold")
+    ax.legend(loc="lower right", fontsize=8, title="category column")
+    ax.grid(axis="x", alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out / "compare_runs.png", dpi=150)
+    plt.close(fig)
+    print(f"Saved: {out / 'compare_runs.png'}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -178,6 +208,8 @@ def main():
     hypothesis_table(runs, root, out)
 
     metrics = [m for m in ("precision", "recall", "f1", "ari") if m in df and df[m].notna().any()]
+    if not metrics:
+        plot_reference(df, out)
     if metrics:
         d = df.dropna(subset=metrics, how="all").iloc[::-1]
         fig, ax = plt.subplots(figsize=(10, 0.6 * len(d) + 2))

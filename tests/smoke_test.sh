@@ -49,4 +49,13 @@ python "$REPO/naive/cluster_incidents.py"           --format survey --hypotheses
 python "$REPO/llm_classification/run.py"            --format survey --hypotheses-file hypotheses_survey.json "${API[@]}" "${CLASSIFY[@]}"
 python "$REPO/clusterllm_granularity/run.py"        --format survey --hypotheses-file hypotheses_survey.json "${API[@]}" "${GRAN[@]}"
 
+echo "=== Format 3: cirs ==="
+python "$REPO/tests/make_synthetic_cirs.py" cirs.xlsx 200
+python "$REPO/naive/preprocess_cirs.py" --input cirs.xlsx
+python "$REPO/naive/cluster_incidents.py"           --format cirs "${API[@]}" "${NAIVE[@]}"
+python "$REPO/llm_classification/run.py"            --format cirs "${API[@]}" "${CLASSIFY[@]}" --perspective contributing-factors
+python "$REPO/clusterllm_granularity/run.py"        --format cirs "${API[@]}" "${GRAN[@]}"
+python "$REPO/compare_runs.py" --format cirs
+python "$REPO/report_topics.py" --run cluster_output/cirs/llm_classification/contributing-factors
+
 echo "Smoke test OK. Outputs in $WORK/cluster_output"

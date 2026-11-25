@@ -130,6 +130,9 @@ _PROFILE_TEXT = {
                "clinical information system (EHR), and identify "
                "systemic problems and improvements that require hospital-wide action.",
                "free-text survey answers (EHR survey among clinicians)"),
+    "cirs": ("You analyze hospital-wide CIRS reports (critical incidents and near misses) "
+             "and identify systemic risks that require hospital-wide action.",
+             "hospital CIRS reports (critical incidents and near misses)"),
 }
 
 # LLM labeling
@@ -573,7 +576,14 @@ def label_cluster(group):
 
     for (_, row), text in zip(sample.iterrows(), fitted):
 
-        if DATA_PROFILE == "survey":
+        if DATA_PROFILE == "cirs":
+            incident_lines.append(
+                f"ID: {row.get('incident_id', '')}\n"
+                f"Medical area: {row.get('medizinbereich', '')}\n"
+                f"Profession: {row.get('beruf', '')}\n"
+                f"Text: {text}"
+            )
+        elif DATA_PROFILE == "survey":
             incident_lines.append(
                 f"ID: {row.get('incident_id', '')}\n"
                 f"Question: {row.get('question', '')}\n"

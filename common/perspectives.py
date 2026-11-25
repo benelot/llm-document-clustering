@@ -95,6 +95,101 @@ PERSPECTIVES = {
 }
 
 
+# Versions for hospital-wide CIRS reports (--format cirs). The names stay the
+# same; the texts are general instead of medication-specific.
+CIRS_PERSPECTIVES = {
+    "process": {
+        "title": "Ort im Behandlungs- oder Arbeitsablauf",
+        "text": (
+            "Gruppiere nach dem Ort des Ereignisses im Behandlungs- oder Arbeitsablauf: "
+            "welcher Arbeitsschritt, welche Tätigkeit oder welche Schnittstelle betroffen "
+            "ist (z.B. Aufnahme, Übergabe, Verordnung, Pflege, Eingriff, Transport, "
+            "Entlassung). Die einzelne Person und der genaue Ort im Spital sind für die "
+            "Gruppierung nicht entscheidend."
+        ),
+        "embed": ("Identify the step of the care or work process in which the incident "
+                  "described in this hospital CIRS report occurred"),
+    },
+    "failure-type": {
+        "title": "Art des Ereignisses",
+        "text": (
+            "Gruppiere nach der Art des Ereignisses: was ist schiefgegangen oder beinahe "
+            "schiefgegangen, unabhängig davon, in welchem Bereich es auftrat. Zwei "
+            "Meldungen gehören zusammen, wenn derselbe Typ von Fehler, Versäumnis oder "
+            "Störung vorliegt."
+        ),
+        "embed": "Identify the type of error, omission or failure described in this CIRS report",
+    },
+    "root-cause": {
+        "title": "Wahrscheinliche Ursache",
+        "text": (
+            "Gruppiere nach der wahrscheinlichen Ursache: z.B. Kommunikation, fehlende oder "
+            "unklare Regeln, Arbeitsbelastung, Wissen und Erfahrung, Geräte und Technik, "
+            "Material, Dokumentation oder Organisation. Die beschriebenen Folgen sind "
+            "weniger wichtig als ihr Grund."
+        ),
+        "embed": "Identify the likely root cause of the incident described in this CIRS report",
+    },
+    "action": {
+        "title": "Massnahme und Zuständigkeit",
+        "text": (
+            "Gruppiere danach, welche Massnahme ähnliche Ereignisse verhindern würde und wer "
+            "zuständig wäre: z.B. Schulung, Anpassung einer Richtlinie oder eines Standards, "
+            "Checkliste, Kommunikationsregel, technische Änderung, Anpassung von Material "
+            "oder Geräten, Personalplanung."
+        ),
+        "embed": ("Identify which preventive measure and which responsible team would "
+                  "prevent the incident described in this CIRS report"),
+    },
+    "med-process-stage": {
+        "title": "Schritt im Behandlungsprozess",
+        "text": (
+            "Gruppiere nach dem Schritt im Behandlungsprozess, in dem das Ereignis auftritt: "
+            "Aufnahme und Anamnese, Diagnostik, Verordnung und Planung, Durchführung von "
+            "Therapie, Pflege oder Eingriff, Überwachung und Nachsorge, Übergabe und "
+            "Verlegung, Entlassung, oder Logistik und Organisation."
+        ),
+        "embed": ("Identify the stage of the patient care process (admission, diagnostics, "
+                  "ordering and planning, treatment or procedure, monitoring, handover, "
+                  "discharge, logistics) in which the incident described in this CIRS "
+                  "report occurred"),
+    },
+    "patient-safety": {
+        "title": "Art des Patientensicherheitsereignisses",
+        "text": (
+            "Gruppiere nach der Art des Patientensicherheitsereignisses: z.B. klinische "
+            "Administration, klinischer Prozess oder Eingriff, Dokumentation, Infektion, "
+            "Medikation, Blut und Blutprodukte, Ernährung, medizinische Geräte, Verhalten, "
+            "Unfälle von Patientinnen und Patienten (z.B. Sturz), Infrastruktur, Ressourcen "
+            "und Organisation."
+        ),
+        "embed": ("Identify the patient safety incident type (e.g. clinical process, "
+                  "documentation, infection, medication, medical device, patient accident, "
+                  "organisation) of the incident described in this CIRS report"),
+    },
+    "contributing-factors": {
+        "title": "Beitragender Faktor (London Protocol)",
+        "text": (
+            "Gruppiere nach dem wichtigsten beitragenden Faktor: Patientenfaktoren (Zustand, "
+            "Kommunikation), Aufgabe und Technologie (Abläufe, Geräte, Hilfsmittel), Personen "
+            "(Wissen, Erfahrung, Belastung), Team (Kommunikation, Übergaben, Aufsicht), "
+            "Arbeitsumfeld (Personal, Zeitdruck, Ausstattung) oder Organisation und "
+            "Management (Regeln, Ressourcen, Sicherheitskultur)."
+        ),
+        "embed": ("Identify the main contributing factor (patient, task and technology, "
+                  "individual, team, work environment, organisation and management) behind "
+                  "the incident described in this CIRS report"),
+    },
+}
+
+
+def get_perspective(name, fmt="incidents"):
+    """Perspective for a format: the CIRS version if there is one, else the default."""
+    if fmt == "cirs" and name in CIRS_PERSPECTIVES:
+        return CIRS_PERSPECTIVES[name]
+    return PERSPECTIVES.get(name, {})
+
+
 def perspective_block(text):
     """Paragraph inserted into the LLM prompts; empty for no perspective."""
     if not text:

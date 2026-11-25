@@ -37,7 +37,7 @@ from common.report import write_report, relabel_by_size   # noqa: E402
 from common.profile import P                              # noqa: E402
 from common.hypotheses import load_hypotheses                         # noqa: E402
 from common import cli                                    # noqa: E402
-from common.perspectives import PERSPECTIVES, perspective_block  # noqa: E402
+from common.perspectives import PERSPECTIVES, get_perspective, perspective_block  # noqa: E402
 
 # ----------------------------------------------------------------------
 # CONFIG (set from command-line flags in main(); run with --help)
@@ -367,7 +367,7 @@ def main(argv=None):
     MERGE_CHUNK_SIZE, TARGET_MIN_LABELS, TARGET_MAX_LABELS = \
         args.merge_chunk_size, args.target_min_labels, args.target_max_labels
     CLASSIFY_BATCH_SIZE, CLASSIFY_MAX_CHARS = args.classify_batch_size, args.classify_max_chars
-    persp = PERSPECTIVES.get(args.perspective, {})
+    persp = get_perspective(args.perspective, args.format)
     PERSPECTIVE_TEXT = args.perspective_text or persp.get("text", "")
     # embedding instruction for the UMAP plot follows the perspective
     if args.embed_instruction == "auto" and persp.get("embed") and vllm.EMBED_PREFIX:

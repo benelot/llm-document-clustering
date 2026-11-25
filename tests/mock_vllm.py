@@ -24,6 +24,7 @@ KEYS = {
     "ansicht": "Ansichten in EPIC", "darstellung": "Ansichten in EPIC",
     "login": "Login und Passwort", "passwort": "Login und Passwort",
     "schulung": "Schulung", "ki ": "KI-Potenzial",
+    "sturz": "Sturz", "hygiene": "Hygiene", "übergabe": "Übergabe und Kommunikation",
 }
 VARIANTS = {  # raw label variants, to test merging
     "Drucker und Etiketten": ["Drucker und Etiketten", "Druckerprobleme", "Etikettendruck"],

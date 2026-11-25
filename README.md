@@ -1,9 +1,10 @@
 # LLM document clustering
 
 This repo clusters hospital texts by topic. It compares three approaches on
-two input formats: ServiceNow incidents and an EHR survey among clinicians.
+three input formats: ServiceNow incidents, an EHR survey among clinicians,
+and hospital-wide CIRS reports.
 All approaches use a local vLLM server (an OpenAI-compatible API) for
-embeddings and chat. A CIRS format will follow.
+embeddings and chat.
 
 | Folder | Approach |
 |---|---|
@@ -205,6 +206,7 @@ If the server does not report the context length, set it with
 |---|---|---|
 | ServiceNow incidents (Excel) | `naive/preprocess_incidents.py` | one incident: short description + description + work notes |
 | EHR survey among clinicians (Excel or CSV) | `naive/preprocess_survey.py` | one respondent: all free-text answers, each prefixed with its question |
+| CIRS reports, hospital-wide (Excel or CSV) | `naive/preprocess_cirs.py` | one case (Fallnummer): Titel, Was ist passiert?, Was wurde getan?, Wie könnten ähnliche Ereignisse künftig verhindert werden?, Zusammenfassung, each with its heading |
 
 The survey preprocessor:
 - Uses the RespondentID as the document ID.
@@ -213,6 +215,52 @@ The survey preprocessor:
   more). They appear in `assignments.csv`.
 - With `--unit field`, it makes one document per answer instead. The ID
   is then `<RespondentID>_<field>`, for example `50000_fix1`.
+
+The CIRS preprocessor:
+- Uses the Fallnummer as the document ID and keeps all other columns as
+  metadata.
+- Does not put the existing categories into the text. It keeps them as
+  reference columns, used only for the evaluation (see below):
+  - `ref_hauptkategorie`
+  - `ref_subkategorie` (Haupt / Sub)
+  - `ref_subsubkategorie` (Haupt / Sub / Sub Sub)
+  - `ref_massnahmenklassifikation`
+- `--fields` selects the text fields (default: all five).
+
+With `--format cirs`, the LLM prompts describe hospital-wide CIRS reports.
+The perspectives keep their names, but their texts are general for the
+whole hospital instead of medication-specific (see `common/perspectives.py`,
+`CIRS_PERSPECTIVES`). For example, `med-process-stage` becomes the step in
+the treatment process (admission, diagnostics, treatment, handover,
+discharge and so on).
+
+## Agreement with existing categories
+
+If the data has category columns (`ref_*`, currently CIRS), every run
+compares its clusters with each of them. Noise is excluded.
+
+| Metric | Meaning |
+|---|---|
+| ARI, AMI | agreement corrected for chance: 0 = random, 1 = identical. AMI is the main score, because it handles different numbers of clusters and categories well. |
+| homogeneity | each cluster holds only one category |
+| completeness | each category lies in only one cluster |
+| purity | share of documents that belong to the main category of their cluster |
+
+- A perspective that groups along another axis, for example
+  `contributing-factors`, can be useful even with low agreement. It shows
+  a view that the existing categories do not have.
+- `action` can be compared with `ref_massnahmenklassifikation`.
+
+| File | Content |
+|---|---|
+| `reference_agreement.csv` / `.json` | the scores per category column |
+| `reference_heatmap_<col>.png` | clusters × categories, colour = share of the cluster |
+| `reference_crosstab_<col>.csv` | the same as counts |
+| `reference_categories_<col>.csv` | per category: its main cluster, its share there, and how many clusters it is spread over |
+| `clusters.csv` | new columns `ref_<col>_main`: main category of each cluster with its share |
+
+`compare_runs.py` lists ARI, AMI, homogeneity and completeness per column
+for every run. Without hypothesis clusters, its chart shows the AMI per run.
 
 ## Outputs
 

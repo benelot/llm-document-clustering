@@ -2,6 +2,8 @@
 *.xlsx
 cleaned_incidents.*
 cleaned_survey.*
+cleaned_cirs.*
+cirs*.csv
 survey*.csv
 cluster_output/
 
