@@ -232,7 +232,39 @@ def reference_columns(df):
     return cols
 
 
-def reference_agreement(df, names, out_dir):
+def _reference_name_check(tops, cluster_info):
+    """LLM: does the cluster name fit the name of the cluster's main category?
+    One call per category column and cluster. Returns {col: {cid: (match, reason)}}."""
+    from common import vllm
+    jobs = [(col, cid, cat, share) for col, t in tops.items() for cid, (cat, share) in t.items()]
+
+    def ask(job):
+        col, cid, cat, share = job
+        info = cluster_info.get(cid, {})
+        prompt = f"""Ein Clustering-Verfahren hat {P['items']} zu einem Cluster zusammengefasst
+und ihm einen Namen gegeben. Die meisten {P['items']} in diesem Cluster ({100 * share:.0f}%)
+haben in der bestehenden, von Menschen vergebenen Kategorisierung ({col}) dieselbe
+Kategorie. Beschreiben Clustername und Kategorie dasselbe Thema?
+
+Clustername: {info.get('cluster_name', '')}
+Cluster-Beschreibung: {info.get('description', '') or info.get('root_cause', '')}
+Bestehende Kategorie: {cat}
+
+Gib JSON zurück:
+{{"match": "passt" | "teilweise" | "passt nicht", "reason": "1 Satz auf Deutsch"}}
+"""
+        o = vllm.chat_json(P["system"], prompt,
+                           validate=lambda o: o.get("match") in ("passt", "teilweise", "passt nicht"))
+        return o["match"], str(o.get("reason", ""))
+
+    res = vllm.map_concurrent(ask, jobs, desc="ref-name-check")
+    out = {}
+    for (col, cid, _, _), r in zip(jobs, res):
+        out.setdefault(col, {})[cid] = ("error", str(r)[:100]) if isinstance(r, Exception) else r
+    return out
+
+
+def reference_agreement(df, names, out_dir, cluster_info=None, name_check=False):
     """Compare clusters (noise excluded) with every ref_* column."""
     from sklearn import metrics as skm
     results, tops = {}, {}
@@ -279,13 +311,22 @@ def reference_agreement(df, names, out_dir):
                        for i in ct.index}
         plot_reference_heatmap(ct, names, short, results[short],
                                out_dir / f"reference_heatmap_{short}.png")
+    checks = {}
+    if name_check and tops:
+        checks = _reference_name_check(tops, cluster_info or {})
+        sizes = df[df["cluster_id"] != -1]["cluster_id"].value_counts()
+        for col, ch in checks.items():
+            cnt = Counter(m for m, _ in ch.values())
+            ok_docs = sum(int(sizes.get(cid, 0)) for cid, (m, _) in ch.items() if m == "passt")
+            results[col]["name_check"] = {k: cnt.get(k, 0) for k in ("passt", "teilweise", "passt nicht")}
+            results[col]["name_passt_docs_pct"] = round(100 * ok_docs / max(1, int(sizes.sum())), 1)
     if results:
         with open(out_dir / "reference_agreement.json", "w", encoding="utf-8") as f:
             json.dump({"explanation": REF_EXPLANATION, "columns": results}, f,
                       indent=2, ensure_ascii=False)
         pd.DataFrame(results).T.rename_axis("reference").to_csv(
             out_dir / "reference_agreement.csv", encoding="utf-8")
-    return results, tops
+    return results, tops, checks
 
 
 def plot_reference_heatmap(ct, names, short, res, out_png, max_cats=30):
@@ -463,7 +504,8 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
                                        encoding="utf-8")
 
     # Agreement with existing categories (ref_* columns, e.g. CIRS)
-    ref_results, ref_tops = reference_agreement(df, names, out_dir)
+    ref_results, ref_tops, ref_checks = reference_agreement(df, names, out_dir, cluster_info,
+                                                            name_check)
 
     # Cluster table
     rows = []
@@ -483,6 +525,8 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
             "new_topic": (not hits) if has_hyp else "",
             **{f"ref_{k}_main": (f"{t[cid][0]} ({100 * t[cid][1]:.0f}%)" if cid in t else "")
                for k, t in ref_tops.items()},
+            **{f"ref_{k}_name_match": ch.get(cid, ("", ""))[0] for k, ch in ref_checks.items()},
+            **{f"ref_{k}_name_reason": ch.get(cid, ("", ""))[1] for k, ch in ref_checks.items()},
             **info,
         })
     clusters = pd.DataFrame(rows).sort_values("size", ascending=False)
@@ -527,6 +571,11 @@ def write_report(df, labels, cluster_info, out_dir, method, vectors=None,
             lines.append(f"  {k:<24} {r['categories']:>4} categories: ARI {r['ari']}, "
                          f"AMI {r['ami']}, homogeneity {r['homogeneity']}, "
                          f"completeness {r['completeness']}, purity {r['purity']}")
+            if "name_check" in r:
+                nc = r["name_check"]
+                lines.append(f"  {'':<24} name check vs. main category: {nc['passt']} passt, "
+                             f"{nc['teilweise']} teilweise, {nc['passt nicht']} passt nicht "
+                             f"({r['name_passt_docs_pct']}% of the documents in 'passt' clusters)")
         lines.append("  " + REF_EXPLANATION)
     lines += ["", "Clusters (by size):"]
     for _, r in clusters.iterrows():

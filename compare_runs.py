@@ -69,6 +69,8 @@ def read_run(d, root):
         for col, r in json.loads(ra.read_text(encoding="utf-8")).get("columns", {}).items():
             for m in ("ari", "ami", "homogeneity", "completeness"):
                 row[f"{col}_{m}"] = r.get(m)
+            if "name_check" in r:
+                row[f"{col}_names_passt_docs_pct"] = r.get("name_passt_docs_pct")
     return row
 
 

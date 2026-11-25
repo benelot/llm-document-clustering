@@ -257,7 +257,15 @@ compares its clusters with each of them. Noise is excluded.
 | `reference_heatmap_<col>.png` | clusters × categories, colour = share of the cluster |
 | `reference_crosstab_<col>.csv` | the same as counts |
 | `reference_categories_<col>.csv` | per category: its main cluster, its share there, and how many clusters it is spread over |
-| `clusters.csv` | new columns `ref_<col>_main`: main category of each cluster with its share |
+| `clusters.csv` | new columns `ref_<col>_main`: main category of each cluster with its share; `ref_<col>_name_match` and `ref_<col>_name_reason`: LLM name check |
+
+The scores compare only which cases end up together, never names. The
+**name check** adds the names: for each category column and each cluster,
+the LLM judges whether the cluster name fits the name of the cluster's main
+category (`passt`, `teilweise`, `passt nicht`, with a reason). `summary.txt`
+shows the counts, and the share of documents that lie in "passt" clusters.
+It costs one LLM call per cluster and column; `--no-llm-name-check` turns it
+off.
 
 `compare_runs.py` lists ARI, AMI, homogeneity and completeness per column
 for every run. Without hypothesis clusters, its chart shows the AMI per run.

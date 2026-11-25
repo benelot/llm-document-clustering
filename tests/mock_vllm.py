@@ -62,6 +62,11 @@ def answer(user):
     if "typische Tickets zum Thema" in user:  # report_topics.py --examples llm
         rows = re.findall(r"^\[(\S+)\] (.*)$", user, flags=re.M)
         return {"examples": [{"id": i, "text": " ".join(t.split()[:8])} for i, t in rows[:3]]}
+    if "Bestehende Kategorie:" in user:  # name check against existing categories
+        cat = re.search(r"Bestehende Kategorie: (.*)", user).group(1)
+        name = re.search(r"Clustername: (.*)", user).group(1)
+        same = topic(cat) is not None and topic(cat) == topic(name)
+        return {"match": "passt" if same else "passt nicht", "reason": "mock"}
     if "Hypothesen-Cluster:" in user:  # hypothesis name check
         cat = re.search(r"Hypothesen-Cluster: (.*)", user).group(1)
         name = re.search(r"Cluster-Name: (.*)", user).group(1)
