@@ -57,5 +57,6 @@ python "$REPO/llm_classification/run.py"            --format cirs "${API[@]}" "$
 python "$REPO/clusterllm_granularity/run.py"        --format cirs "${API[@]}" "${GRAN[@]}"
 python "$REPO/compare_runs.py" --format cirs
 python "$REPO/report_topics.py" --run cluster_output/cirs/llm_classification/contributing-factors
+python "$REPO/report_topics.py" --run cluster_output/cirs/llm_classification/contributing-factors --examples title --hide-ids "${API[@]:2:2}"
 
 echo "Smoke test OK. Outputs in $WORK/cluster_output"

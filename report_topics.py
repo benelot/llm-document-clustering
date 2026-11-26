@@ -12,6 +12,11 @@ Examples (choose with --examples):
   llm    the LLM reads the most typical tickets of a topic and writes short,
          distinct one-line examples without names. More concise, but the
          wording is the LLM's. Needs --llm-url (or VLLM_LLM_URL).
+  title  the same typical tickets as "short", but the LLM writes a new short
+         title for each from its full text (no names, no dates). Needs --llm-url.
+
+--hide-ids leaves the ticket / case numbers out of the overview; they are
+written to a separate file themenuebersicht_<mode>_ohne_id_ids.csv for checking.
 
 "Typical" = closest to the centre of the topic on the run's UMAP map
 (supervised coordinates if present). Near-duplicate examples are skipped.
@@ -23,6 +28,7 @@ Outputs in the run folder (the two modes do not overwrite each other):
 Examples:
   python report_topics.py --run cluster_output/incidents/llm_classification/process
   python report_topics.py --run cluster_output/incidents/llm_classification/process --examples llm
+  python report_topics.py --run cluster_output/cirs/llm_classification/subject --examples title --hide-ids
 """
 
 import re
@@ -185,28 +191,85 @@ def llm_examples(topics, n, max_chars, pool):
     return out
 
 
+def _title_prompt(name, texts, max_words):
+    items = "\n\n".join(f"[{k + 1}] {t}" for k, t in enumerate(texts))
+    return f"""Hier sind {len(texts)} {UNIT_NAME} zum Thema "{name}".
+
+Schreibe für jede einen neuen, kurzen Titel (höchstens {max_words} Wörter, Deutsch),
+der das konkrete Ereignis bzw. Problem beschreibt.
+- Keine Namen von Patientinnen, Patienten oder Mitarbeitenden, keine Geburtsdaten,
+  keine Daten und keine Fall- oder Ticketnummern.
+- Sachlich, ohne Wertung.
+
+Gib JSON zurück, mit der Nummer in eckigen Klammern als Schlüssel:
+{{"titles": {{"1": "<Titel>", "2": "<Titel>", ...}}}}
+
+{UNIT_NAME}:
+{items}
+"""
+
+
+def title_examples(topics, n, max_chars):
+    """Same typical documents as 'short'; the LLM writes a new title for each."""
+    max_words = max(6, min(15, max_chars // 10))
+    jobs = []
+    for name, _, g in topics:
+        picks = pick_short_examples(g, n, max_chars)
+        full = dict(zip(g["incident_id"], g["text"]))
+        texts = [full[i] for i, _ in picks]
+        fixed = len(P["system"]) + len(_title_prompt(name, [], max_words)) + 50
+        texts, _ = vllm.fit_docs(texts, fixed, per_item_chars=10)
+        jobs.append((name, picks, texts))
+
+    def run(job):
+        name, picks, texts = job
+        if not picks:
+            return []
+        keys = [str(k + 1) for k in range(len(picks))]
+
+        def valid(o):
+            t = o.get("titles")
+            return isinstance(t, dict) and all(str(t.get(k, "")).strip() for k in keys)
+        o = vllm.chat_json(P["system"], _title_prompt(name, texts, max_words), validate=valid)
+        return [(iid, re.sub(r"\s+", " ", str(o["titles"][k])).strip())
+                for (iid, _), k in zip(picks, keys)]
+
+    res = vllm.map_concurrent(run, jobs, desc="titles")
+    out = []
+    for (name, picks, _), r in zip(jobs, res):
+        if isinstance(r, Exception):
+            print(f"[warning] new titles failed for '{name}', using the original short text")
+            r = picks
+        out.append(r)
+    return out
+
+
 # ----------------------------------------------------------------------
 # OUTPUT
 # ----------------------------------------------------------------------
 
-def write_markdown(path, title, header, rows):
+def _line(iid, text, hide_ids):
+    return text if hide_ids else f"{iid}: {text}"
+
+
+def write_markdown(path, title, header, rows, hide_ids=False):
     lines = [f"# Themenübersicht: {title}", "", header, ""]
     for r in rows:
         lines.append(f"## {r['rank']}. {r['topic']} ({r['tickets']} {UNIT_NAME}, {r['share']:.1f}%)")
         if r["description"]:
             lines.append(r["description"])
         lines.append("")
-        lines += [f"- {iid}: {text}" for iid, text in r["examples"]]
+        lines += [f"- {_line(iid, text, hide_ids)}" for iid, text in r["examples"]]
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def write_excel(path, title, header, rows, n, info):
+def write_excel(path, title, header, rows, n, info, hide_ids=False):
     from openpyxl.styles import Alignment, Font
     table = pd.DataFrame([{
         "Rang": r["rank"], "Thema": r["topic"], UNIT_NAME: r["tickets"],
         "Anteil (%)": round(r["share"], 1), "Beschreibung": r["description"],
-        **{f"Beispiel {k + 1}": (f"{r['examples'][k][0]}: {r['examples'][k][1]}"
+        **{f"Beispiel {k + 1}": (_line(*r["examples"][k], hide_ids)
                                  if k < len(r["examples"]) else "") for k in range(n)},
     } for r in rows])
     meta = pd.DataFrame({"Feld": ["Lauf", "Übersicht"] + list(info.get("params", {}).keys()),
@@ -238,8 +301,12 @@ def main(argv=None):
     p = cli.make_parser(__doc__)
     p.add_argument("--run", required=True, help="run folder with assignments.csv and clusters.csv")
     cli.add_flag(p, "--examples", "REPORT_EXAMPLES", "short", str,
-                 "short = original short description, llm = condensed by the LLM",
-                 choices=["short", "llm"])
+                 "short = original short description, llm = condensed by the LLM, "
+                 "title = new title per typical document, written by the LLM",
+                 choices=["short", "llm", "title"])
+    cli.add_flag(p, "--hide-ids", "REPORT_HIDE_IDS", False, bool,
+                 "leave the ticket / case numbers out of the overview (they go to a "
+                 "separate _ids.csv for checking)")
     cli.add_flag(p, "--n-examples", "REPORT_N_EXAMPLES", 3, int, "examples per topic")
     cli.add_flag(p, "--max-chars", "REPORT_MAX_CHARS", 120, int,
                  "length of one example line in characters (llm: about this many / 8 words)")
@@ -247,7 +314,7 @@ def main(argv=None):
                  "llm mode: number of typical tickets the LLM chooses from")
     cli.add_flag(p, "--input", "CLEANED_FILE", None, str,
                  "cleaned input for the full texts (default: from run_info.json)")
-    g = p.add_argument_group("LLM (only for --examples llm)")
+    g = p.add_argument_group("LLM (only for --examples llm / title)")
     cli.add_flag(g, "--llm-url", "VLLM_LLM_URL", "http://localhost:8001/v1/chat/completions", str,
                  "chat endpoint")
     cli.add_flag(g, "--llm-model", "VLLM_LLM_MODEL", "Qwen/Qwen3.8-27B", str, "chat model")
@@ -263,7 +330,7 @@ def main(argv=None):
     UNIT_NAME = UNIT.get(fmt, "Dokumente")
     method = info.get("method", run.name)
 
-    if args.examples == "llm":
+    if args.examples in ("llm", "title"):
         cli.check_url(args.llm_url, "--llm-url", "VLLM_LLM_URL")
         vllm.VLLM_LLM_URL, vllm.VLLM_LLM_MODEL = args.llm_url, args.llm_model
         vllm.LLM_CONCURRENCY = args.llm_concurrency
@@ -285,6 +352,8 @@ def main(argv=None):
 
     if args.examples == "llm":
         examples = llm_examples(topics, args.n_examples, args.max_chars, args.llm_pool)
+    elif args.examples == "title":
+        examples = title_examples(topics, args.n_examples, args.max_chars)
     else:
         examples = [pick_short_examples(g, args.n_examples, args.max_chars) for _, _, g in topics]
 
@@ -294,14 +363,26 @@ def main(argv=None):
             for k, ((name, desc, g), ex) in enumerate(zip(topics, examples))]
     header = (f"{total} {UNIT_NAME}, {len(c)} Themen"
               + (f", {len(noise)} {topics[-1][0]} ({100 * len(noise) / total:.1f}%)" if len(noise) else "")
-              + f". Beispiele: {f'Kurzbeschreibung der typischsten {UNIT_NAME}' if args.examples == 'short' else 'vom LLM gekürzt'}.")
+              + ". Beispiele: " + {
+                  "short": f"Kurzbeschreibung der typischsten {UNIT_NAME}",
+                  "llm": "vom LLM gekürzt",
+                  "title": f"vom LLM neu formulierte Titel typischer {UNIT_NAME}",
+              }[args.examples] + ".")
 
-    md = run / f"themenuebersicht_{args.examples}.md"
-    xl = run / f"themenuebersicht_{args.examples}.xlsx"
-    write_markdown(md, method, header, rows)
-    write_excel(xl, method, header, rows, args.n_examples, info)
+    stem = f"themenuebersicht_{args.examples}" + ("_ohne_id" if args.hide_ids else "")
+    md, xl = run / f"{stem}.md", run / f"{stem}.xlsx"
+    write_markdown(md, method, header, rows, args.hide_ids)
+    write_excel(xl, method, header, rows, args.n_examples, info, args.hide_ids)
+    saved = [md, xl]
+    if args.hide_ids:  # mapping for checking, kept out of the overview
+        ids = run / f"{stem}_ids.csv"
+        pd.DataFrame([{"rank": r["rank"], "topic": r["topic"], "example": k + 1,
+                       "id": iid, "text": text}
+                      for r in rows for k, (iid, text) in enumerate(r["examples"])]
+                     ).to_csv(ids, index=False, encoding="utf-8")
+        saved.append(ids)
     print(md.read_text(encoding="utf-8")[:3000])
-    print(f"\nSaved: {md}\nSaved: {xl}")
+    print("\n" + "\n".join(f"Saved: {f}" for f in saved))
 
 
 if __name__ == "__main__":

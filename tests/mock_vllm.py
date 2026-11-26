@@ -59,6 +59,9 @@ def items(prompt):
 
 
 def answer(user):
+    if "Schreibe für jede einen neuen, kurzen Titel" in user:  # report_topics --examples title
+        rows = re.findall(r"^\[(\d+)\] (.*)$", user, flags=re.M)
+        return {"titles": {k: "Neuer Titel: " + " ".join(t.split()[1:6]) for k, t in rows}}
     if re.search(r"Hier sind typische \w+ zum Thema", user):  # report_topics.py --examples llm
         rows = re.findall(r"^\[(\S+)\] (.*)$", user, flags=re.M)
         return {"examples": [{"id": i, "text": " ".join(t.split()[:8])} for i, t in rows[:3]]}

@@ -309,9 +309,15 @@ their INC numbers. "Sonstiges" or noise comes last.
 - `--examples llm`: the LLM reads the 10 most typical tickets of a topic
   and writes 3 short, distinct example lines without names. These are more
   concise, but the wording is the LLM's. Use the INC number to check a line.
-- Outputs in the run folder: `themenuebersicht_short.md/.xlsx` and
-  `themenuebersicht_llm.md/.xlsx`. The two modes do not overwrite each
-  other. The Excel file has one row per topic, plus an "Info" sheet with
+- `--examples title`: the same typical tickets as `short`, but the LLM
+  writes a new short title for each from its full text, without names or
+  dates. Useful when the original titles are poor or must not be shared
+  (CIRS).
+- `--hide-ids`: leaves the ticket or case numbers out of the overview. For
+  checking, they go to a separate file `…_ohne_id_ids.csv` in the run folder.
+- Outputs in the run folder: `themenuebersicht_<mode>.md/.xlsx`, with
+  `_ohne_id` in the name when `--hide-ids` is used. The modes do not
+  overwrite each other. The Excel file has one row per topic, plus an "Info" sheet with
   the run parameters.
 
 ## Comparing runs
