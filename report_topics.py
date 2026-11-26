@@ -39,6 +39,9 @@ from common import cli, vllm  # noqa: E402
 from common.profile import P, set_profile  # noqa: E402
 
 NOISE_NAME = "Sonstiges"
+# what one document is called in the overview, per format
+UNIT = {"incidents": "Tickets", "survey": "Antworten", "cirs": "Meldungen"}
+UNIT_NAME = "Tickets"
 
 
 # ----------------------------------------------------------------------
@@ -74,6 +77,11 @@ def short_text(text, max_chars):
     text = str(text)
     m = re.search(r"SHORT_DESC:\s*(.*?)(?:\n\s*\n\s*DESCRIPTION:|$)", text, flags=re.S)
     s = m.group(1).strip() if m and m.group(1).strip() else ""
+    if not s:  # CIRS: case title, plus the start of "Was ist passiert?"
+        t = re.search(r"^Titel:\s*(.+)$", text, flags=re.M)
+        e = re.search(r"^Was ist passiert\?:\s*(.+)$", text, flags=re.M)
+        if t or e:
+            s = " – ".join(x.group(1).strip() for x in (t, e) if x)
     if not s:
         m = re.search(r"DESCRIPTION:\s*(.*?)(?:\n\s*\n|$)", text, flags=re.S)
         s = m.group(1).strip() if m else ""
@@ -120,19 +128,20 @@ def pick_short_examples(g, n, max_chars):
 def _llm_prompt(name, description, tickets, n, max_chars):
     items = "\n".join(f"[{iid}] {t}" for iid, t in tickets)
     words = max(8, max_chars // 8)
-    return f"""Hier sind typische Tickets zum Thema "{name}".
+    unit = UNIT_NAME
+    return f"""Hier sind typische {unit} zum Thema "{name}".
 Beschreibung des Themas: {description or '-'}
 
-Wähle {n} möglichst unterschiedliche, typische Tickets aus und fasse jedes in
+Wähle {n} möglichst unterschiedliche, typische {unit} aus und fasse jedes in
 einer kurzen, prägnanten Zeile zusammen (höchstens {words} Wörter, Deutsch).
 - Nenne das konkrete Problem, nicht nur das Thema.
 - Keine Namen von Patientinnen, Patienten oder Mitarbeitenden, keine Geburtsdaten.
-- Verwende nur die angegebenen Ticket-Nummern.
+- Verwende nur die angegebenen Nummern in eckigen Klammern.
 
 Gib JSON zurück:
-{{"examples": [{{"id": "<Ticket-Nummer>", "text": "<eine Zeile>"}}, ...]}}
+{{"examples": [{{"id": "<Nummer>", "text": "<eine Zeile>"}}, ...]}}
 
-Tickets:
+{unit}:
 {items}
 """
 
@@ -183,7 +192,7 @@ def llm_examples(topics, n, max_chars, pool):
 def write_markdown(path, title, header, rows):
     lines = [f"# Themenübersicht: {title}", "", header, ""]
     for r in rows:
-        lines.append(f"## {r['rank']}. {r['topic']} ({r['tickets']} Tickets, {r['share']:.1f}%)")
+        lines.append(f"## {r['rank']}. {r['topic']} ({r['tickets']} {UNIT_NAME}, {r['share']:.1f}%)")
         if r["description"]:
             lines.append(r["description"])
         lines.append("")
@@ -195,7 +204,7 @@ def write_markdown(path, title, header, rows):
 def write_excel(path, title, header, rows, n, info):
     from openpyxl.styles import Alignment, Font
     table = pd.DataFrame([{
-        "Rang": r["rank"], "Thema": r["topic"], "Tickets": r["tickets"],
+        "Rang": r["rank"], "Thema": r["topic"], UNIT_NAME: r["tickets"],
         "Anteil (%)": round(r["share"], 1), "Beschreibung": r["description"],
         **{f"Beispiel {k + 1}": (f"{r['examples'][k][0]}: {r['examples'][k][1]}"
                                  if k < len(r["examples"]) else "") for k in range(n)},
@@ -250,6 +259,8 @@ def main(argv=None):
     run = Path(args.run)
     a, c, info, fmt = load_run(run, args.input)
     set_profile(fmt)
+    global UNIT_NAME
+    UNIT_NAME = UNIT.get(fmt, "Dokumente")
     method = info.get("method", run.name)
 
     if args.examples == "llm":
@@ -281,9 +292,9 @@ def main(argv=None):
     rows = [{"rank": k + 1, "topic": name, "tickets": len(g), "share": 100 * len(g) / total,
              "description": desc, "examples": ex}
             for k, ((name, desc, g), ex) in enumerate(zip(topics, examples))]
-    header = (f"{total} Tickets, {len(c)} Themen"
+    header = (f"{total} {UNIT_NAME}, {len(c)} Themen"
               + (f", {len(noise)} {topics[-1][0]} ({100 * len(noise) / total:.1f}%)" if len(noise) else "")
-              + f". Beispiele: {'Kurzbeschreibung der typischsten Tickets' if args.examples == 'short' else 'vom LLM gekürzt'}.")
+              + f". Beispiele: {f'Kurzbeschreibung der typischsten {UNIT_NAME}' if args.examples == 'short' else 'vom LLM gekürzt'}.")
 
     md = run / f"themenuebersicht_{args.examples}.md"
     xl = run / f"themenuebersicht_{args.examples}.xlsx"

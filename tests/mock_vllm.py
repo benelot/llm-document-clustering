@@ -59,7 +59,7 @@ def items(prompt):
 
 
 def answer(user):
-    if "typische Tickets zum Thema" in user:  # report_topics.py --examples llm
+    if re.search(r"Hier sind typische \w+ zum Thema", user):  # report_topics.py --examples llm
         rows = re.findall(r"^\[(\S+)\] (.*)$", user, flags=re.M)
         return {"examples": [{"id": i, "text": " ".join(t.split()[:8])} for i, t in rows[:3]]}
     if "Bestehende Kategorie:" in user:  # name check against existing categories
